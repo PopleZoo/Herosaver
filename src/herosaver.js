@@ -351,7 +351,12 @@ const saveObjInner = () => {
 
   function emitMesh (obj) {
     const geo = obj.geometry
+    if (!geo || typeof geo.getAttribute !== 'function') {
+      console.warn(`[Herosaver] skipped mesh "${obj.name || obj.type}": no readable geometry`)
+      return
+    }
     const pos = geo.getAttribute('position')
+    if (!pos) return
     const uv = geo.getAttribute('uv')
     const isSkinned = obj.isSkinnedMesh || (obj.skeleton && obj.skeleton.bones && obj.skeleton.bones.length > 0)
 
