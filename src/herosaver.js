@@ -4,7 +4,7 @@ import { Matrix4, Vector3 } from 'three'
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
 import { saveAs } from 'file-saver'
 import { character, getName, process, bakeSkinnedVertex } from './utils'
-import { parseSTL, findConnectedComponents, analyzeShell } from './cube-remover'
+import { removeCubeFromSTL, parseSTL, findConnectedComponents, analyzeShell } from './cube-remover'
 
 // Sanitize strings for use in filenames and material names (replace spaces, special chars)
 const sanitize = s => s.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
@@ -231,18 +231,10 @@ const cubeMeshUuids = () => {
 // for the STL/OBJ exports). Optionally filters out the HeroForge wrapping
 // cube/display case by UUID before export, using the same name/boundary
 // detection as the OBJ export.
-const exportSTLBuffer = (subdivisions, filterCubes = false) => {
+const exportSTLBuffer = subdivisions => {
   const group = process(getExportRoots(), subdivisions, !!character.data.mirroredPose)
-  if (filterCubes) {
-    // Remove cube meshes by name (same STRONG names as OBJ: vault*, productVis*, loRez, dome, cage, skydome)
-    const STRONG_NAMES = /vault|productVis|loRez|dome|cage|skydome/i
-    group.traverse(obj => {
-      if (obj.isMesh && STRONG_NAMES.test(obj.name || obj.type || '')) {
-        obj.removeFromParent()
-      }
-    })
-  }
   const view = new STLExporter().parse(group, { binary: true })
+  // STLExporter binary mode returns a DataView; normalize to a plain ArrayBuffer.
   return view.buffer
     ? view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength)
     : view
@@ -333,8 +325,7 @@ window.saveStl = subdivisions => {
 // export character as STL file with the surrounding cube/shell removed.
 // Same pipeline as saveStl, then the cube is stripped from the exported buffer.
 window.saveCleanStl = subdivisions => {
-  // Filter cubes by name/boundary BEFORE export (same as OBJ)
-  const cleaned = exportSTLBuffer(subdivisions, true)
+  const cleaned = removeCubeFromSTL(exportSTLBuffer(subdivisions))
   saveAs(new Blob([cleaned], { type: 'application/octet-stream' }), `${sanitize(getName())}_clean.stl`)
 }
 
