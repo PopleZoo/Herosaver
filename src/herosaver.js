@@ -939,6 +939,33 @@ window.heroCropEyes = () => {
   })
 }
 
+// Debug: dump the eye material's shader source so the export can replicate how
+// scleraTexture / irisAndDistanceTexture / clutMap are sampled and blended.
+window.heroEyeShader = () => {
+  const seen = new Set()
+  getExportRoots().forEach(root => {
+    root.traverse(obj => {
+      if (!obj.isMesh || seen.has(obj.uuid)) return
+      seen.add(obj.uuid)
+      const name = obj.name || obj.type || ''
+      if (!/eye|iris|pupil/i.test(name)) return
+      const m = Array.isArray(obj.material) ? obj.material[0] : obj.material
+      console.log(`[Herosaver] ${name} material (${m && m.type} / ${m && m.constructor.name})`)
+      if (m && m.fragmentShader) {
+        console.log('[Herosaver] --- fragmentShader ---')
+        console.log(m.fragmentShader)
+      }
+      if (m && m.vertexShader) {
+        console.log('[Herosaver] --- vertexShader ---')
+        console.log(m.vertexShader)
+      }
+      if (m && m.onBeforeCompile) {
+        console.log('[Herosaver] onBeforeCompile present (params):', Object.keys(m.onBeforeCompile).length)
+      }
+    })
+  })
+}
+
 // lives (main figure, mount/familiar/companion). Lists only nodes that are a
 // mesh or carry a colorBake/_partLightGroup, with their full ancestor path.
 // Run heroScene() in DevTools to locate the other model(s) in a composition.
