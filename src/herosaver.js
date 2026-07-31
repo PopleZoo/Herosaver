@@ -234,10 +234,10 @@ const cubeMeshUuids = () => {
 const exportSTLBuffer = (subdivisions, filterCubes = false) => {
   const group = process(getExportRoots(), subdivisions, !!character.data.mirroredPose)
   if (filterCubes) {
-    const cubeUuids = cubeMeshUuids()
-    // Remove cube meshes from the group before export (same logic as OBJ)
+    // Remove cube meshes by name (same STRONG names as OBJ: vault*, productVis*, loRez, dome, cage, skydome)
+    const STRONG_NAMES = /vault|productVis|loRez|dome|cage|skydome/i
     group.traverse(obj => {
-      if (obj.isMesh && cubeUuids.has(obj.uuid)) {
+      if (obj.isMesh && STRONG_NAMES.test(obj.name || obj.type || '')) {
         obj.removeFromParent()
       }
     })
