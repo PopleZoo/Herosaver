@@ -153,9 +153,22 @@ const cubeMeshUuids = () => {
     b.minY <= union.minY + eps || b.maxY >= union.maxY - eps ||
     b.minZ <= union.minZ + eps || b.maxZ >= union.maxZ - eps
 
-  // Detector 1: Containment (any mesh whose AABB encloses the union of ALL OTHER meshes)
+  // Detector 1: Name + boundary (case-like name AND flush against union bounds)
+  // Run FIRST since vault parts have clear names (vault*, productVis) and
+  // containment can catch only 1 piece of a multi-part vault.
   for (const b of boxes) {
-    // Compute union of all OTHER boxes
+    if (CASE_NAME_STRONG.test(b.name) || (CASE_NAME_BOUNDARY.test(b.name) && flush(b))) {
+      removed.add(b.uuid)
+    }
+  }
+
+  if (removed.size > 0) {
+    console.log(`[Herosaver] OBJ: dropped ${removed.size} case-like shell(s) (name/boundary)`)
+    return removed
+  }
+
+  // Detector 2: Containment (any mesh whose AABB encloses the union of ALL OTHER meshes)
+  for (const b of boxes) {
     const otherBoxes = boxes.filter(bx => bx.uuid !== b.uuid)
     if (otherBoxes.length === 0) continue
     const otherUnion = {
@@ -175,18 +188,6 @@ const cubeMeshUuids = () => {
 
   if (removed.size > 0) {
     console.log(`[Herosaver] OBJ: dropped ${removed.size} enclosing shell(s) (containment)`)
-    return removed
-  }
-
-  // Detector 2: Name + boundary (case-like name AND flush against union bounds)
-  for (const b of boxes) {
-    if (CASE_NAME_STRONG.test(b.name) || (CASE_NAME_BOUNDARY.test(b.name) && flush(b))) {
-      removed.add(b.uuid)
-    }
-  }
-
-  if (removed.size > 0) {
-    console.log(`[Herosaver] OBJ: dropped ${removed.size} case-like shell(s) (name/boundary)`)
     return removed
   }
 
