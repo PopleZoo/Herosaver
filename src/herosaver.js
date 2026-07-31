@@ -948,22 +948,32 @@ window.heroEyeShader = () => {
   const renderer = window.CK && window.CK.renderManager && window.CK.renderManager.renderer
   const programs = (renderer && renderer.info && renderer.info.programs) || []
   console.log('[Herosaver] total compiled programs:', programs.length)
+  const EYE = /iris|sclera|clut|eye/i
   let found = 0
-  for (const p of programs) {
+  programs.forEach((p, i) => {
     const prog = p && p.program
-    if (!prog) continue
+    if (!prog) return
     const fs = prog.fragmentShader || ''
     const vs = prog.vertexShader || ''
-    if (/irisAndDistanceTexture|scleraTexture|clutMap/i.test(fs + vs)) {
+    if (EYE.test(fs + vs)) {
       found++
-      console.log(`[Herosaver] eye program #${found}`)
+      console.log(`[Herosaver] program #${i} contains eye tokens`)
       console.log('[Herosaver] --- fragmentShader ---')
       console.log(fs)
       console.log('[Herosaver] --- vertexShader ---')
       console.log(vs)
     }
+  })
+  if (!found) {
+    console.warn('[Herosaver] no eye program matched; listing programs by token:')
+    programs.forEach((p, i) => {
+      const prog = p && p.program
+      const fs = (prog && prog.fragmentShader) || ''
+      const tokens = ['iris', 'sclera', 'clut', 'colorAtlasMap', 'uvPosScl', 'physicalAtlas']
+      const hit = tokens.filter(t => new RegExp(t, 'i').test(fs))
+      if (hit.length) console.log(`program #${i}: ${hit.join(', ')} | fragmentShader ${fs.length} chars`)
+    })
   }
-  if (!found) console.warn('[Herosaver] no eye program found by shader-source match')
 }
 
 // lives (main figure, mount/familiar/companion). Lists only nodes that are a
