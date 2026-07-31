@@ -8,7 +8,7 @@ import { removeCubeFromSTL } from './cube-remover'
 
 // Bump with each release so stale CDN/browser copies are easy to spot from the
 // console: window.herosaverVersion.
-window.herosaverVersion = '1.4.1'
+window.herosaverVersion = '1.4.2'
 
 // ─── scene discovery ────────────────────────────────────────────────────────
 // HeroForge keeps the whole composition (figure + mounts + companions) inside

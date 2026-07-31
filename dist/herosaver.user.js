@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Herosaver
 // @namespace    https://github.com/PopleZoo/Herosaver
-// @version      1.4.1
+// @version      1.4.2
 // @description  Save Configuration and STLs from websites using the THREE.JS framework
 // @author       reformagus&D1amondweaver
 // @homepageURL  https://github.com/PopleZoo/Herosaver
@@ -15,18 +15,13 @@
 (function () {
   'use strict'
 
-  // jsDelivr instead of raw.githubusercontent.com: raw's CDN ignores the
-  // cache-busting query and served stale bundles for several minutes after each
-  // push, which made every test run old code. jsDelivr reflects new commits
-  // within a minute, and the query keeps the browser from caching it too.
-  const SRC = 'https://cdn.jsdelivr.net/gh/PopleZoo/Herosaver@UVCoords/dist/herosaver.js'
-
-  // Inject into the page context so the loaded code can reach window.CK, THREE, etc.
-  // A cache-busting query is appended so the freshest published bundle always
-  // runs (GitHub raw and the browser otherwise cache the bundle for minutes).
+  // Load the bundle pinned to the current commit SHA. Branch CDN URLs (raw or
+  // jsDelivr) cache for minutes and kept serving old bundles, so the loader
+  // first asks the GitHub API for the latest commit, then fetches that
+  // immutable SHA-pinned file. Always fresh, never stale.
   const run = (fn) => {
     const s = document.createElement('script')
-    s.textContent = `fetch('${SRC}?_=' + Date.now()).then(r => r.text()).then(eval).then(() => ${fn}())`
+    s.textContent = `(async()=>{const c=await fetch('https://api.github.com/repos/PopleZoo/Herosaver/commits/UVCoords').then(r=>r.json());const src='https://raw.githubusercontent.com/PopleZoo/Herosaver/'+c.sha+'/dist/herosaver.js';eval(await fetch(src).then(r=>r.text()));${fn}()})()`
     document.body.appendChild(s)
     s.remove()
   }
