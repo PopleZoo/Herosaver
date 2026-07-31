@@ -941,29 +941,28 @@ window.heroCropEyes = () => {
 
 // Debug: dump the eye material's shader source so the export can replicate how
 // scleraTexture / irisAndDistanceTexture / clutMap are sampled and blended.
+// The material's own shader is a stub, so this reads the real compiled GLSL
+// from the renderer's program cache (matched via the irisAndDistanceTexture
+// uniform).
 window.heroEyeShader = () => {
-  const seen = new Set()
-  getExportRoots().forEach(root => {
-    root.traverse(obj => {
-      if (!obj.isMesh || seen.has(obj.uuid)) return
-      seen.add(obj.uuid)
-      const name = obj.name || obj.type || ''
-      if (!/eye|iris|pupil/i.test(name)) return
-      const m = Array.isArray(obj.material) ? obj.material[0] : obj.material
-      console.log(`[Herosaver] ${name} material (${m && m.type} / ${m && m.constructor.name})`)
-      if (m && m.fragmentShader) {
-        console.log('[Herosaver] --- fragmentShader ---')
-        console.log(m.fragmentShader)
-      }
-      if (m && m.vertexShader) {
+  const renderer = window.CK && window.CK.renderManager && window.CK.renderManager.renderer
+  const programs = (renderer && renderer.info && renderer.info.programs) || []
+  let found = 0
+  for (const p of programs) {
+    const prog = p.program
+    const u = p.uniforms || {}
+    if (u.irisAndDistanceTexture) {
+      found++
+      console.log(`[Herosaver] eye program #${found}, uniforms:`, Object.keys(u))
+      console.log('[Herosaver] --- fragmentShader ---')
+      console.log(prog.fragmentShader)
+      if (prog.vertexShader) {
         console.log('[Herosaver] --- vertexShader ---')
-        console.log(m.vertexShader)
+        console.log(prog.vertexShader)
       }
-      if (m && m.onBeforeCompile) {
-        console.log('[Herosaver] onBeforeCompile present (params):', Object.keys(m.onBeforeCompile).length)
-      }
-    })
-  })
+    }
+  }
+  if (!found) console.warn('[Herosaver] no eye program found in renderer.info.programs')
 }
 
 // lives (main figure, mount/familiar/companion). Lists only nodes that are a
