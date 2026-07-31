@@ -2,6 +2,38 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.4.0]
+
+### Fixed
+- Saved color-atlas PNGs were vertically flipped: `readRenderTargetPixels`
+  returns rows bottom-to-top, but they were written straight into the canvas,
+  so the exported texture was upside down. Rows are now flipped to GL
+  orientation (v=0 at the bottom), matching how the shader samples the atlas.
+  This was the cause of misplaced/inverted detail on the exported texture
+  (e.g. the eyes looking wrong on the UV image).
+- "Save OBJ and Textures" UVs were double-flipped (the old `1 - v` no longer
+  matches, since the atlas PNG is now stored correctly oriented). The exported
+  `vt` coordinates now use the shader's exact `uvPosScl` remap
+  (`localUV * scale + offset`), so OBJ + atlas sample identically to the live
+  renderer.
+
+### Added
+- `saveTextures` now discovers every `colorBake` in the scene instead of
+  reaching one via a hard-coded `scene.children[0].children[3]...` path. A
+  composition with several models (character + mount/familiar/companion)
+  produces one atlas per model (`_colorAtlas.png`, `_colorAtlas_1.png`, ...).
+- `saveObj` exports every scene-level composition root (rider + mount and any
+  separate characters) and groups faces by the atlas each material actually
+  samples, emitting a `newmtl`/`map_Kd` per atlas in the MTL.
+- OBJ export now handles meshes with material arrays and non-indexed geometry.
+- Emissive atlases are saved when the bake provides them (blank bakes are
+  skipped), and one unreadable bake no longer aborts the rest.
+- `window.heroBakes()` debug helper that dumps every discovered bake and the
+  material/`uvPosScl`/atlas mapping of each mesh, for diagnosing eye/UV
+  placement and multi-model exports on the live site.
+- STL export (`process`) accepts multiple roots and deduplicates meshes, so
+  overlapping roots are never exported twice.
+
 ## [1.3.2]
 
 ### Changed

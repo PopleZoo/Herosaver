@@ -4,13 +4,70 @@ import { Matrix4, Vector3 } from 'three'
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
 import { saveAs } from 'file-saver'
 import { character, getName, process, bakeSkinnedVertex } from './utils'
-import { parseSTL, removeCubeTriangles, removeCubeFromSTL } from './cube-remover'
-import { exportOBJFromTriangles } from './obj-exporter'
+import { removeCubeFromSTL } from './cube-remover'
+
+// ─── scene discovery ────────────────────────────────────────────────────────
+// HeroForge keeps the whole composition (figure + mounts + companions) inside
+// window.CK.scene, but the exporter used to reach the color bake via a
+// hard-coded child index, missing every model after the first. These helpers
+// walk the scene to find every bake and every scene-level root that makes up
+// the composition, so a rider + mount exports as a single piece.
+
+const findColorBakes = () => {
+  const bakes = []
+  const seen = new Set()
+  const scene = window.CK && window.CK.scene
+
+  const tryAdd = obj => {
+    if (!obj || !obj.colorBake || seen.has(obj.uuid)) return
+    seen.add(obj.uuid)
+    bakes.push(obj.colorBake)
+  }
+
+  if (scene) scene.traverse(obj => tryAdd(obj))
+
+  // Legacy fallback in case the bake lives outside the scene graph.
+  if (bakes.length === 0) {
+    try {
+      tryAdd(window.CK.scene.children[0].children[3]._partLightGroup.parent)
+    } catch (e) { /* structure unavailable */ }
+  }
+
+  return bakes
+}
+
+const findCompositionRoots = () => {
+  const roots = new Map()
+  const scene = window.CK && window.CK.scene
+  if (!scene) return []
+
+  scene.traverse(obj => {
+    if (!(obj.colorBake || obj._partLightGroup)) return
+    let node = obj
+    while (node && node !== scene && node.parent && node.parent !== scene) {
+      node = node.parent
+    }
+    if (node && node !== scene) roots.set(node.uuid, node)
+  })
+
+  return [...roots.values()]
+}
+
+// The scene-level groups that contain every exported mesh: the main character
+// plus any mount/familiar/companion (deduplicated by object uuid). Meshes are
+// additionally deduplicated at export time.
+const getExportRoots = () => {
+  const roots = new Map()
+  const add = obj => { if (obj && !roots.has(obj.uuid)) roots.set(obj.uuid, obj) }
+  add(character)
+  findCompositionRoots().forEach(add)
+  return [...roots.values()]
+}
 
 // Export the character to a binary STL ArrayBuffer (the common starting point
 // for the STL/OBJ exports and the cube removal that both share).
 const exportSTLBuffer = subdivisions => {
-  const group = process(character, subdivisions, !!character.data.mirroredPose)
+  const group = process(getExportRoots(), subdivisions, !!character.data.mirroredPose)
   const view = new STLExporter().parse(group, { binary: true })
   // STLExporter binary mode returns a DataView; normalize to a plain ArrayBuffer.
   return view.buffer
@@ -105,26 +162,31 @@ window.saveStl = subdivisions => {
 // size encloses the whole figure - that is the cube.
 window.heroMeshes = () => {
   const rows = []
-  character.updateMatrixWorld(true)
-  character.traverse(mesh => {
-    const geo = mesh.geometry
-    if (!geo || !(geo.attributes && geo.attributes.position)) return
-    const pos = geo.getAttribute('position')
-    let minX = Infinity; let minY = Infinity; let minZ = Infinity
-    let maxX = -Infinity; let maxY = -Infinity; let maxZ = -Infinity
-    for (let i = 0; i < pos.count; i++) {
-      const x = pos.getX(i); const y = pos.getY(i); const z = pos.getZ(i)
-      if (x < minX) minX = x; if (x > maxX) maxX = x
-      if (y < minY) minY = y; if (y > maxY) maxY = y
-      if (z < minZ) minZ = z; if (z > maxZ) maxZ = z
-    }
-    rows.push({
-      name: mesh.name || '(unnamed)',
-      type: mesh.type,
-      visible: mesh.visible,
-      skinned: !!(mesh.isSkinnedMesh || (mesh.skeleton && mesh.skeleton.bones && mesh.skeleton.bones.length)),
-      verts: pos.count,
-      size: [maxX - minX, maxY - minY, maxZ - minZ].map(s => +s.toFixed(3)).join(' x ')
+  const seen = new Set()
+  getExportRoots().forEach(root => {
+    root.updateMatrixWorld(true)
+    root.traverse(mesh => {
+      if (seen.has(mesh.uuid)) return
+      seen.add(mesh.uuid)
+      const geo = mesh.geometry
+      if (!geo || !(geo.attributes && geo.attributes.position)) return
+      const pos = geo.getAttribute('position')
+      let minX = Infinity; let minY = Infinity; let minZ = Infinity
+      let maxX = -Infinity; let maxY = -Infinity; let maxZ = -Infinity
+      for (let i = 0; i < pos.count; i++) {
+        const x = pos.getX(i); const y = pos.getY(i); const z = pos.getZ(i)
+        if (x < minX) minX = x; if (x > maxX) maxX = x
+        if (y < minY) minY = y; if (y > maxY) maxY = y
+        if (z < minZ) minZ = z; if (z > maxZ) maxZ = z
+      }
+      rows.push({
+        name: mesh.name || '(unnamed)',
+        type: mesh.type,
+        visible: mesh.visible,
+        skinned: !!(mesh.isSkinnedMesh || (mesh.skeleton && mesh.skeleton.bones && mesh.skeleton.bones.length)),
+        verts: pos.count,
+        size: [maxX - minX, maxY - minY, maxZ - minZ].map(s => +s.toFixed(3)).join(' x ')
+      })
     })
   })
   console.table(rows)
@@ -138,86 +200,133 @@ window.saveCleanStl = subdivisions => {
   saveAs(new Blob([cleaned], { type: 'application/octet-stream' }), `${getName()}_clean.stl`)
 }
 
-
-// export character as OBJ file
-// Doesn't route through the STL triangles in an attempt to preserve uv coordinates
-// also exports MTL with UVs and reference to texture atlas
+// export character as OBJ file with UVs and a MTL referencing the saved color
+// atlas. The atlas PNGs are written first (saveTextures), then every mesh is
+// baked to world space and its local 0-1 UVs are remapped into its atlas
+// rectangle using the same uvPosScl (offset.xy, scale.zw) uniform the live
+// RawShaderMaterial uses - so the exported UVs sample exactly what the shader
+// does. Meshes that reference the same colorAtlasMap texture (e.g. a mount's
+// own atlas) are grouped under their own MTL material.
 window.saveObj = () => {
-  window.saveTextures()
+  const atlases = window.saveTextures()
+
   const vertices = []
   const uvs = []
   const faces = []
-
-  let vertexOffset = 1
-  let uvOffset = 1
 
   // Same coordinate transform used by process() for STL/OBJ: rotate 90° on X, scale ×10
   const mrot = new Matrix4().makeRotationX(90 * Math.PI / 180)
   const msca = new Matrix4().makeScale(10, 10, 10)
   const mTransform = new Matrix4().multiplyMatrices(msca, mrot)
 
-  character.updateMatrixWorld(true)
+  // Which saved PNG a material samples, found by matching its colorAtlasMap
+  // texture against the atlases saveTextures just wrote out.
+  const atlasFileFor = material => {
+    const tex = material && material.uniforms && material.uniforms.colorAtlasMap &&
+      material.uniforms.colorAtlasMap.value
+    const entry = tex && atlases.get(tex.uuid)
+    return entry ? entry.file : null
+  }
 
-  character.traverse(obj => {
-    if (!obj.isMesh) return
+  // The shader's atlas-rect remap (offset.xy, scale.zw). Applied verbatim -
+  // no extra v-flip, because saveTextures stores the PNG in GL orientation.
+  const uvPosSclFor = material => {
+    const uvps = material && material.uniforms && material.uniforms.uvPosScl &&
+      material.uniforms.uvPosScl.value
+    return uvps
+      ? { ox: uvps.x, oy: uvps.y, sx: uvps.z, sy: uvps.w }
+      : { ox: 0, oy: 0, sx: 1, sy: 1 }
+  }
 
-    const geo = obj.geometry
-    const pos = geo.getAttribute('position')
-    const uv = geo.getAttribute('uv')
-    const isSkinned = obj.isSkinnedMesh || (obj.skeleton && obj.skeleton.bones && obj.skeleton.bones.length > 0)
+  const mtlMaterials = new Map()
+  const mtlOrder = []
 
-    for (let i = 0; i < pos.count; i++) {
-      const v = isSkinned
-        ? bakeSkinnedVertex(obj, i).applyMatrix4(obj.matrixWorld)
-        : new Vector3(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(obj.matrixWorld)
-      v.applyMatrix4(mTransform)
-      vertices.push(`v ${v.x} ${v.y} ${v.z}`)
+  const ensureMtl = atlasFile => {
+    const name = atlasFile ? 'mat_' + atlasFile.replace(/\.png$/, '') : 'mat_hero'
+    if (!mtlMaterials.has(name)) {
+      mtlMaterials.set(name, atlasFile)
+      mtlOrder.push(name)
     }
+    return name
+  }
 
-    if (uv) {
-      // Remap this part's local 0-1 UV into its rectangle in the shared
-      // color atlas, using the same uvPosScl (offset.xy, scale.zw) uniform
-      // the live RawShaderMaterial uses to sample colorAtlasMap.
-      const uvps = obj.material && obj.material.uniforms && obj.material.uniforms.uvPosScl
-        ? obj.material.uniforms.uvPosScl.value
-        : null
-      const ox = uvps ? uvps.x : 0
-      const oy = uvps ? uvps.y : 0
-      const sx = uvps ? uvps.z : 1
-      const sy = uvps ? uvps.w : 1
+  getExportRoots().forEach(root => root.updateMatrixWorld(true))
 
-      for (let i = 0; i < uv.count; i++) {
-        const u = uv.getX(i) * sx + ox
-        const v = uv.getY(i) * sy + oy
-        uvs.push(`vt ${u} ${1 - v}`)
+  const seenMeshes = new Set()
+  let vertexOffset = 1
+  let uvOffset = 1
+
+  getExportRoots().forEach(root => {
+    root.traverse(obj => {
+      if (!obj.isMesh) return
+      if (seenMeshes.has(obj.uuid)) return
+      seenMeshes.add(obj.uuid)
+
+      const geo = obj.geometry
+      const pos = geo.getAttribute('position')
+      const uv = geo.getAttribute('uv')
+      const isSkinned = obj.isSkinnedMesh || (obj.skeleton && obj.skeleton.bones && obj.skeleton.bones.length > 0)
+
+      // Bake vertices to world space (skinning included) and apply the export transform.
+      const vStart = vertexOffset
+      for (let i = 0; i < pos.count; i++) {
+        const v = isSkinned
+          ? bakeSkinnedVertex(obj, i).applyMatrix4(obj.matrixWorld)
+          : new Vector3(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(obj.matrixWorld)
+        v.applyMatrix4(mTransform)
+        vertices.push(`v ${v.x} ${v.y} ${v.z}`)
       }
-    }
+      vertexOffset += pos.count
 
-    const index = geo.index
+      // Remap this part's local 0-1 UV into its rectangle in the shared color
+      // atlas. HeroForge meshes use a single material, so one remap per mesh.
+      const uStart = uvOffset
+      if (uv) {
+        const remap = uvPosSclFor(Array.isArray(obj.material) ? obj.material[0] : obj.material)
+        for (let i = 0; i < uv.count; i++) {
+          uvs.push(`vt ${uv.getX(i) * remap.sx + remap.ox} ${uv.getY(i) * remap.sy + remap.oy}`)
+        }
+        uvOffset += uv.count
+      }
 
-    if (index) {
-      for (let i = 0; i < index.count; i += 3) {
-        const ai = index.getX(i)
-        const bi = index.getX(i + 1)
-        const ci = index.getX(i + 2)
+      const index = geo.index
+      const materials = Array.isArray(obj.material) ? obj.material : [obj.material]
+      const groups = geo.groups && geo.groups.length
+        ? geo.groups
+        : [{ start: 0, count: index ? index.count : pos.count, materialIndex: 0 }]
 
-        const av = ai + vertexOffset
-        const bv = bi + vertexOffset
-        const cv = ci + vertexOffset
+      for (const group of groups) {
+        const mat = materials[group.materialIndex] || materials[0]
+        faces.push(`usemtl ${ensureMtl(atlasFileFor(mat))}`)
 
-        if (uv) {
-          const at = ai + uvOffset
-          const bt = bi + uvOffset
-          const ct = ci + uvOffset
-          faces.push(`f ${av}/${at} ${bv}/${bt} ${cv}/${ct}`)
-        } else {
-          faces.push(`f ${av} ${bv} ${cv}`)
+        for (let i = 0; i < group.count; i += 3) {
+          let ai, bi, ci
+          if (index) {
+            ai = index.getX(group.start + i)
+            bi = index.getX(group.start + i + 1)
+            ci = index.getX(group.start + i + 2)
+          } else {
+            const base = group.start + i
+            ai = base
+            bi = base + 1
+            ci = base + 2
+          }
+
+          const av = ai + vStart
+          const bv = bi + vStart
+          const cv = ci + vStart
+
+          if (uv) {
+            const at = ai + uStart
+            const bt = bi + uStart
+            const ct = ci + uStart
+            faces.push(`f ${av}/${at} ${bv}/${bt} ${cv}/${ct}`)
+          } else {
+            faces.push(`f ${av} ${bv} ${cv}`)
+          }
         }
       }
-    }
-
-    vertexOffset += pos.count
-    if (uv) uvOffset += uv.count
+    })
   })
 
   const obj =
@@ -227,39 +336,42 @@ ${vertices.join('\n')}
 
 ${uvs.join('\n')}
 
-usemtl HeroMaterial
 ${faces.join('\n')}
 `
 
   saveAs(new Blob([obj]), `${getName()}.obj`)
 
-  const mtl = [
-    'newmtl HeroMaterial',
-    'Ka 1.0 1.0 1.0',
-    'Kd 1.0 1.0 1.0',
-    'Ks 0.0 0.0 0.0',
-    'd 1.0',
-    'illum 1',
-    `map_Kd ${getName()}_colorAtlas.png`
-  ].join('\n')
+  const mtl = []
+  for (const name of mtlOrder) {
+    mtl.push(
+      `newmtl ${name}`,
+      'Ka 1.0 1.0 1.0',
+      'Kd 1.0 1.0 1.0',
+      'Ks 0.0 0.0 0.0',
+      'd 1.0',
+      'illum 1'
+    )
+    const file = mtlMaterials.get(name)
+    if (file) mtl.push(`map_Kd ${file}`)
+  }
 
-  saveAs(new Blob([mtl], { type: 'text/plain' }), `${getName()}.mtl`)
+  saveAs(new Blob([mtl.join('\n')], { type: 'text/plain' }), `${getName()}.mtl`)
 }
 
-
-// pulls the colorBake atlases from the webgl renderer
-// Each atlas is drawn to a canvas and saved as a PNG.
+// Pulls the colorBake atlases from the webgl renderer and saves each as a PNG.
+// Every distinct bake in the scene is exported, so a composition with multiple
+// models (rider + mount/familiar) produces one atlas per model. Each PNG is
+// flipped to GL orientation (v=0 at the bottom) so it matches the shader's
+// sampling and the OBJ UVs in saveObj.
+// Returns a Map of texture uuid -> { file, width, height } used by saveObj.
 window.saveTextures = () => {
   const renderer = window.CK.renderManager.renderer
-  const seen = new Set()
+  const manifest = new Map()
+  const nameCounts = {}
 
-  const saveTarget = (name, target) => {
-    if (!target || !target.texture || seen.has(target.texture.uuid)) return
-    seen.add(target.texture.uuid)
-
+  const saveTarget = (target, kind) => {
     const w = target.width
     const h = target.height
-
     const pixels = new Uint8Array(w * h * 4)
 
     renderer.readRenderTargetPixels(
@@ -271,6 +383,29 @@ window.saveTextures = () => {
       pixels
     )
 
+    // Emissive bakes are sometimes not populated; skip a blank emissive atlas.
+    if (kind === 'emissive') {
+      let lit = false
+      for (let i = 0; i < pixels.length; i += 4) {
+        if (pixels[i] || pixels[i + 1] || pixels[i + 2]) { lit = true; break }
+      }
+      if (!lit) return
+    }
+
+    const base = kind === 'emissive' ? 'emissiveAtlas' : 'colorAtlas'
+    nameCounts[base] = (nameCounts[base] || 0) + 1
+    const suffix = nameCounts[base] === 1 ? '' : `_${nameCounts[base]}`
+    const file = `${getName()}_${base}${suffix}.png`
+
+    // readRenderTargetPixels returns rows bottom-to-top; flip them so the PNG
+    // is stored top-down (v=0 at the bottom), exactly how the shader samples
+    // the atlas. Without this flip the saved texture is upside down, which
+    // shows up as misplaced/inverted detail (e.g. the eyes).
+    const flipped = new Uint8Array(w * h * 4)
+    for (let y = 0; y < h; y++) {
+      flipped.set(pixels.subarray(y * w * 4, (y + 1) * w * 4), (h - 1 - y) * w * 4)
+    }
+
     const canvas = document.createElement('canvas')
     canvas.width = w
     canvas.height = h
@@ -278,34 +413,88 @@ window.saveTextures = () => {
     const ctx = canvas.getContext('2d')
     const data = ctx.createImageData(w, h)
 
-    data.data.set(pixels)
+    data.data.set(flipped)
     ctx.putImageData(data, 0, 0)
 
     canvas.toBlob(blob => {
       if (blob) {
-        saveAs(blob, `${getName()}_${name}.png`)
+        saveAs(blob, file)
       }
     }, 'image/png')
+
+    manifest.set(target.texture.uuid, { file, width: w, height: h })
   }
 
+  findColorBakes().forEach(bake => {
+    const rgba = bake.targetsRGBA
+    if (!rgba) return
 
-  const bake = window.CK.scene.children[0]
-    .children[3]
-    ._partLightGroup
-    .parent
-    .colorBake
+    // The color atlas is the important one; emissive is included when the bake
+    // provides it (some compositions have glowing parts). Each target is saved
+    // independently so one unreadable bake can't abort the rest.
+    for (const kind of ['color', 'emissive']) {
+      const target = rgba[kind]
+      if (!target || !target.texture || manifest.has(target.texture.uuid)) continue
+      try {
+        saveTarget(target, kind)
+      } catch (e) {
+        console.warn('[Herosaver] failed to save', kind, 'atlas:', e)
+      }
+    }
+  })
 
+  window.__herosaverAtlases = manifest
+  return manifest
+}
 
-  saveTarget(
-    "colorAtlas",
-    bake.targetsRGBA.color
-  )
+// Debug: dump every discovered color bake and a sample of mesh material/UV
+// mappings. Run heroBakes() in DevTools to inspect the atlas layout on the
+// live site - useful for diagnosing eye/UV placement and multi-model exports.
+window.heroBakes = () => {
+  const bakes = []
+  findColorBakes().forEach((bake, bi) => {
+    const rgba = bake.targetsRGBA || {}
+    Object.keys(rgba).forEach(kind => {
+      const t = rgba[kind]
+      if (!t) return
+      bakes.push({
+        bake: bi,
+        kind,
+        width: t.width,
+        height: t.height,
+        texture: t.texture ? t.texture.uuid : null
+      })
+    })
+  })
 
- /* Doesn't seem to produce emissive atlas even when character has glowing textures
+  const meshes = []
+  const seen = new Set()
+  getExportRoots().forEach(root => {
+    root.traverse(obj => {
+      if (!obj.isMesh || seen.has(obj.uuid)) return
+      seen.add(obj.uuid)
+      const m = Array.isArray(obj.material) ? obj.material[0] : obj.material
+      const uvps = m && m.uniforms && m.uniforms.uvPosScl ? m.uniforms.uvPosScl.value : null
+      const atlas = m && m.uniforms && m.uniforms.colorAtlasMap ? m.uniforms.colorAtlasMap.value : null
+      const uv = obj.geometry.getAttribute('uv')
+      meshes.push({
+        name: obj.name || '(unnamed)',
+        type: obj.type,
+        material: m ? (m.type || m.constructor.name) : null,
+        uvCount: uv ? uv.count : 0,
+        uvPosScl: uvps ? [uvps.x, uvps.y, uvps.z, uvps.w].map(n => +n.toFixed(3)).join(',') : 'none',
+        atlasTexture: atlas ? atlas.uuid : null,
+        skinned: !!(obj.isSkinnedMesh || (obj.skeleton && obj.skeleton.bones && obj.skeleton.bones.length))
+      })
+    })
+  })
 
- saveTarget(
-    "emissiveAtlas",
-    bake.targetsRGBA.emissive
-  )
-  */
+  try {
+    console.log('[Herosaver] color bakes:')
+    console.table(bakes)
+    console.log('[Herosaver] mesh material/UV mappings:')
+    console.table(meshes)
+  } catch (e) { /* console.table unavailable */ }
+
+  return { bakes, meshes }
 }

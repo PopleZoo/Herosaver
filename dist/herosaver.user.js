@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Herosaver
 // @namespace    https://github.com/D1amondweaver/Herosaver
-// @version      1.3.2
+// @version      1.4.0
 // @description  Save Configuration and STLs from websites using the THREE.JS framework
 // @author       reformagus&D1amondweaver
 // @homepageURL  https://github.com/D1amondweaver/Herosaver

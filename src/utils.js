@@ -121,6 +121,10 @@ export const process = (object3d, smooth, mirroredPose) => {
   const material = new MeshBasicMaterial()
   const group = new Group()
 
+  // Accept either a single root Object3D or an array of roots so a composition
+  // with several models (character + mount/familiar/companion) exports together.
+  const roots = Array.isArray(object3d) ? object3d : [object3d]
+
   // Transformation applied after world space: rotate 90° on X and scale ×10
   // to match the coordinate system expected by STL/OBJ tools.
   const mrot = new Matrix4().makeRotationX(90 * Math.PI / 180)
@@ -128,11 +132,18 @@ export const process = (object3d, smooth, mirroredPose) => {
   const mTransform = new Matrix4().multiplyMatrices(msca, mrot)
 
   // Make sure every node's world matrix is current before we read matrixWorld below.
-  object3d.updateMatrixWorld(true)
+  roots.forEach(root => root.updateMatrixWorld(true))
+
+  // Skip meshes already exported from another root so overlapping roots don't
+  // add the same geometry twice.
+  const exported = new Set()
 
   // traverse (not traverseVisible): HeroForge keeps some exported meshes flagged
   // invisible, so traverseVisible would silently drop parts of the model.
-  object3d.traverse(mesh => {
+  roots.forEach(object3d => object3d.traverse(mesh => {
+    if (exported.has(mesh.uuid)) return
+    exported.add(mesh.uuid)
+
     // Older Three.js (used by HeroForge) may not set isMesh/isSkinnedMesh flags —
     // fall back to checking the constructor name and skeleton presence.
     const isMesh = mesh.isMesh || (mesh.geometry && mesh.geometry.isBufferGeometry)
@@ -181,7 +192,7 @@ export const process = (object3d, smooth, mirroredPose) => {
     }
 
     group.add(new Mesh(finalGeometry, material))
-  })
+  }))
 
   return group
 }
