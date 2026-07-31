@@ -846,6 +846,99 @@ window.heroIris = () => {
   return report
 }
 
+// Debug: crop each eye mesh's sampled atlas rect out of the render target,
+// upscale it 8x (nearest-neighbour) and download as a PNG so the iris/pupil
+// detail can be inspected directly. Also logs every texture the eye material
+// uses - if the pupil lives in a separate map, it will show up there.
+window.heroCropEyes = () => {
+  const renderer = window.CK && window.CK.renderManager && window.CK.renderManager.renderer
+  if (!renderer) {
+    console.log('[Herosaver] no renderer available')
+    return
+  }
+  const targetByUuid = new Map()
+  findColorBakes().forEach(bake => {
+    const rgba = bake.targetsRGBA || {}
+    for (const kind of ['color', 'emissive']) {
+      const t = rgba[kind]
+      if (t && t.texture) targetByUuid.set(t.texture.uuid, t)
+    }
+  })
+
+  const seen = new Set()
+  getExportRoots().forEach(root => {
+    root.traverse(obj => {
+      if (!obj.isMesh || seen.has(obj.uuid)) return
+      seen.add(obj.uuid)
+      const name = obj.name || obj.type || ''
+      if (!/eye|iris|pupil/i.test(name)) return
+
+      const m = Array.isArray(obj.material) ? obj.material[0] : obj.material
+      const textures = []
+      if (m && m.uniforms) {
+        for (const [k, u] of Object.entries(m.uniforms)) {
+          if (u && u.value && u.value.isTexture) {
+            textures.push(`${k}=${u.value.uuid.slice(0, 8)}${u.value.image ? `(${u.value.image.width}x${u.value.image.height})` : ''}`)
+          }
+        }
+      }
+
+      const uvps = m && m.uniforms && m.uniforms.uvPosScl ? m.uniforms.uvPosScl.value : null
+      const tex = m && m.uniforms && m.uniforms.colorAtlasMap ? m.uniforms.colorAtlasMap.value : null
+      const target = tex ? targetByUuid.get(tex.uuid) : null
+
+      if (!target || !uvps) {
+        console.warn(`[Herosaver] no readable eye atlas for ${name} (textures: ${textures.join(', ') || 'none'})`)
+        return
+      }
+
+      const w = target.width; const h = target.height
+      const x0 = Math.max(0, Math.floor(uvps.x * w))
+      const y0 = Math.max(0, Math.floor(uvps.y * h))
+      const x1 = Math.min(w, Math.ceil((uvps.x + uvps.z) * w))
+      const y1 = Math.min(h, Math.ceil((uvps.y + uvps.w) * h))
+      const rw = Math.max(1, x1 - x0)
+      const rh = Math.max(1, y1 - y0)
+
+      const px = new Uint8Array(rw * rh * 4)
+      try {
+        renderer.readRenderTargetPixels(target, x0, y0, rw, rh, px)
+      } catch (e) {
+        console.warn(`[Herosaver] could not read eye atlas for ${name}:`, e)
+        return
+      }
+
+      const flipped = new Uint8Array(rw * rh * 4)
+      for (let y = 0; y < rh; y++) {
+        flipped.set(px.subarray(y * rw * 4, (y + 1) * rw * 4), (rh - 1 - y) * rw * 4)
+      }
+      let dark = 0
+      for (let i = 0; i < flipped.length; i += 4) {
+        if (flipped[i] < 60 && flipped[i + 1] < 60 && flipped[i + 2] < 60) dark++
+      }
+
+      const scale = 8
+      const tmp = document.createElement('canvas')
+      tmp.width = rw; tmp.height = rh
+      const tmpCtx = tmp.getContext('2d')
+      const img = tmpCtx.createImageData(rw, rh)
+      img.data.set(flipped)
+      tmpCtx.putImageData(img, 0, 0)
+
+      const out = document.createElement('canvas')
+      out.width = rw * scale; out.height = rh * scale
+      const octx = out.getContext('2d')
+      octx.imageSmoothingEnabled = false
+      octx.drawImage(tmp, 0, 0, rw * scale, rh * scale)
+      out.toBlob(blob => {
+        if (blob) saveAs(blob, `${name}_crop.png`)
+      }, 'image/png')
+
+      console.log(`[Herosaver] ${name}: crop ${rw}x${rh} at (${x0},${y0}), ${(100 * dark / (rw * rh)).toFixed(1)}% dark, textures: ${textures.join(', ') || 'none'}`)
+    })
+  })
+}
+
 // lives (main figure, mount/familiar/companion). Lists only nodes that are a
 // mesh or carry a colorBake/_partLightGroup, with their full ancestor path.
 // Run heroScene() in DevTools to locate the other model(s) in a composition.
