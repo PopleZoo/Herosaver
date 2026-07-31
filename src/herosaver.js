@@ -143,6 +143,7 @@ const cubeMeshUuids = () => {
     b.minY <= union.minY + eps || b.maxY >= union.maxY - eps ||
     b.minZ <= union.minZ + eps || b.maxZ >= union.maxZ - eps
 
+  // Detector 1: Containment (any mesh whose AABB encloses the full union)
   for (const b of boxes) {
     const encloses =
       b.minX <= union.minX + eps && b.maxX >= union.maxX - eps &&
@@ -151,22 +152,14 @@ const cubeMeshUuids = () => {
     if (encloses) removed.add(b.uuid)
   }
 
-  if (removed.size === 0) {
-    for (const b of boxes) {
-      if (CASE_NAME_STRONG.test(b.name) || (CASE_NAME_BOUNDARY.test(b.name) && flush(b))) {
-        removed.add(b.uuid)
-      }
+  // Detector 2: Name + boundary (case-like name AND flush against union bounds)
+  for (const b of boxes) {
+    if (CASE_NAME_STRONG.test(b.name) || (CASE_NAME_BOUNDARY.test(b.name) && flush(b))) {
+      removed.add(b.uuid)
     }
-    if (removed.size > 0) {
-      console.log(`[Herosaver] OBJ: dropped ${removed.size} case-like shell(s) (name/boundary)`)
-      return removed
-    }
-  } else {
-    console.log(`[Herosaver] OBJ: dropped ${removed.size} enclosing shell(s) (display case)`)
-    return removed
   }
 
-  // Fallback: one mesh dwarfs every real body part by many orders of magnitude.
+  // Detector 3: Volume gap (one mesh dwarfs all others)
   const asc = boxes
     .map(b => ({ uuid: b.uuid, vol: (b.maxX - b.minX) * (b.maxY - b.minY) * (b.maxZ - b.minZ) }))
     .filter(b => b.vol > 0)
@@ -181,7 +174,11 @@ const cubeMeshUuids = () => {
 
   if (splitPos >= 0 && maxRatio > 1000) {
     for (let k = splitPos + 1; k < asc.length; k++) removed.add(asc[k].uuid)
-    console.log(`[Herosaver] OBJ: dropped ${removed.size} oversized shell(s) (volume gap ${maxRatio.toExponential(1)}x)`)
+  }
+
+  // Log what was found
+  if (removed.size > 0) {
+    console.log(`[Herosaver] OBJ: dropped ${removed.size} case shell(s) (all detectors combined)`)
   } else {
     const top = boxes
       .map(b => ({
