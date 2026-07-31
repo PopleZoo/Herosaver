@@ -31,6 +31,12 @@ All notable changes to this project are documented in this file.
 - `window.heroBakes()` debug helper that dumps every discovered bake and the
   material/`uvPosScl`/atlas mapping of each mesh, for diagnosing eye/UV
   placement and multi-model exports on the live site.
+- `window.heroScene()` debug helper that lists every mesh/bake node with its
+  full scene path, so the location of each model (rider, mount, companion)
+  can be confirmed on the live site.
+- `saveObj` no longer aborts when one mesh has an unexpected geometry/material:
+  the offending mesh is logged and skipped, and any other failure is printed
+  to the console instead of silently producing no OBJ.
 - STL export (`process`) accepts multiple roots and deduplicates meshes, so
   overlapping roots are never exported twice.
 

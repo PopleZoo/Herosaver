@@ -208,6 +208,14 @@ window.saveCleanStl = subdivisions => {
 // does. Meshes that reference the same colorAtlasMap texture (e.g. a mount's
 // own atlas) are grouped under their own MTL material.
 window.saveObj = () => {
+  try {
+    saveObjInner()
+  } catch (e) {
+    console.error('[Herosaver] saveObj failed:', e)
+  }
+}
+
+const saveObjInner = () => {
   const atlases = window.saveTextures()
 
   const vertices = []
@@ -262,72 +270,82 @@ window.saveObj = () => {
       if (seenMeshes.has(obj.uuid)) return
       seenMeshes.add(obj.uuid)
 
-      const geo = obj.geometry
-      const pos = geo.getAttribute('position')
-      const uv = geo.getAttribute('uv')
-      const isSkinned = obj.isSkinnedMesh || (obj.skeleton && obj.skeleton.bones && obj.skeleton.bones.length > 0)
-
-      // Bake vertices to world space (skinning included) and apply the export transform.
-      const vStart = vertexOffset
-      for (let i = 0; i < pos.count; i++) {
-        const v = isSkinned
-          ? bakeSkinnedVertex(obj, i).applyMatrix4(obj.matrixWorld)
-          : new Vector3(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(obj.matrixWorld)
-        v.applyMatrix4(mTransform)
-        vertices.push(`v ${v.x} ${v.y} ${v.z}`)
-      }
-      vertexOffset += pos.count
-
-      // Remap this part's local 0-1 UV into its rectangle in the shared color
-      // atlas. HeroForge meshes use a single material, so one remap per mesh.
-      const uStart = uvOffset
-      if (uv) {
-        const remap = uvPosSclFor(Array.isArray(obj.material) ? obj.material[0] : obj.material)
-        for (let i = 0; i < uv.count; i++) {
-          uvs.push(`vt ${uv.getX(i) * remap.sx + remap.ox} ${uv.getY(i) * remap.sy + remap.oy}`)
-        }
-        uvOffset += uv.count
-      }
-
-      const index = geo.index
-      const materials = Array.isArray(obj.material) ? obj.material : [obj.material]
-      const groups = geo.groups && geo.groups.length
-        ? geo.groups
-        : [{ start: 0, count: index ? index.count : pos.count, materialIndex: 0 }]
-
-      for (const group of groups) {
-        const mat = materials[group.materialIndex] || materials[0]
-        faces.push(`usemtl ${ensureMtl(atlasFileFor(mat))}`)
-
-        for (let i = 0; i < group.count; i += 3) {
-          let ai, bi, ci
-          if (index) {
-            ai = index.getX(group.start + i)
-            bi = index.getX(group.start + i + 1)
-            ci = index.getX(group.start + i + 2)
-          } else {
-            const base = group.start + i
-            ai = base
-            bi = base + 1
-            ci = base + 2
-          }
-
-          const av = ai + vStart
-          const bv = bi + vStart
-          const cv = ci + vStart
-
-          if (uv) {
-            const at = ai + uStart
-            const bt = bi + uStart
-            const ct = ci + uStart
-            faces.push(`f ${av}/${at} ${bv}/${bt} ${cv}/${ct}`)
-          } else {
-            faces.push(`f ${av} ${bv} ${cv}`)
-          }
-        }
+      // One broken mesh (unexpected geometry/material) must not abort the whole
+      // export - log it and keep going so the OBJ still downloads.
+      try {
+        emitMesh(obj)
+      } catch (e) {
+        console.warn(`[Herosaver] skipped mesh "${obj.name || obj.type}" in saveObj:`, e)
       }
     })
   })
+
+  function emitMesh (obj) {
+    const geo = obj.geometry
+    const pos = geo.getAttribute('position')
+    const uv = geo.getAttribute('uv')
+    const isSkinned = obj.isSkinnedMesh || (obj.skeleton && obj.skeleton.bones && obj.skeleton.bones.length > 0)
+
+    // Bake vertices to world space (skinning included) and apply the export transform.
+    const vStart = vertexOffset
+    for (let i = 0; i < pos.count; i++) {
+      const v = isSkinned
+        ? bakeSkinnedVertex(obj, i).applyMatrix4(obj.matrixWorld)
+        : new Vector3(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(obj.matrixWorld)
+      v.applyMatrix4(mTransform)
+      vertices.push(`v ${v.x} ${v.y} ${v.z}`)
+    }
+    vertexOffset += pos.count
+
+    // Remap this part's local 0-1 UV into its rectangle in the shared color
+    // atlas. HeroForge meshes use a single material, so one remap per mesh.
+    const uStart = uvOffset
+    if (uv) {
+      const remap = uvPosSclFor(Array.isArray(obj.material) ? obj.material[0] : obj.material)
+      for (let i = 0; i < uv.count; i++) {
+        uvs.push(`vt ${uv.getX(i) * remap.sx + remap.ox} ${uv.getY(i) * remap.sy + remap.oy}`)
+      }
+      uvOffset += uv.count
+    }
+
+    const index = geo.index
+    const materials = Array.isArray(obj.material) ? obj.material : [obj.material]
+    const groups = geo.groups && geo.groups.length
+      ? geo.groups
+      : [{ start: 0, count: index ? index.count : pos.count, materialIndex: 0 }]
+
+    for (const group of groups) {
+      const mat = materials[group.materialIndex] || materials[0]
+      faces.push(`usemtl ${ensureMtl(atlasFileFor(mat))}`)
+
+      for (let i = 0; i < group.count; i += 3) {
+        let ai, bi, ci
+        if (index) {
+          ai = index.getX(group.start + i)
+          bi = index.getX(group.start + i + 1)
+          ci = index.getX(group.start + i + 2)
+        } else {
+          const base = group.start + i
+          ai = base
+          bi = base + 1
+          ci = base + 2
+        }
+
+        const av = ai + vStart
+        const bv = bi + vStart
+        const cv = ci + vStart
+
+        if (uv) {
+          const at = ai + uStart
+          const bt = bi + uStart
+          const ct = ci + uStart
+          faces.push(`f ${av}/${at} ${bv}/${bt} ${cv}/${ct}`)
+        } else {
+          faces.push(`f ${av} ${bv} ${cv}`)
+        }
+      }
+    }
+  }
 
   const obj =
 `mtllib ${getName()}.mtl
@@ -358,7 +376,6 @@ ${faces.join('\n')}
   saveAs(new Blob([mtl.join('\n')], { type: 'text/plain' }), `${getName()}.mtl`)
 }
 
-// Pulls the colorBake atlases from the webgl renderer and saves each as a PNG.
 // Every distinct bake in the scene is exported, so a composition with multiple
 // models (rider + mount/familiar) produces one atlas per model. Each PNG is
 // flipped to GL orientation (v=0 at the bottom) so it matches the shader's
@@ -497,4 +514,54 @@ window.heroBakes = () => {
   } catch (e) { /* console.table unavailable */ }
 
   return { bakes, meshes }
+}
+
+// Debug: dump the scene hierarchy so you can see exactly where every model
+// lives (main figure, mount/familiar/companion). Lists only nodes that are a
+// mesh or carry a colorBake/_partLightGroup, with their full ancestor path.
+// Run heroScene() in DevTools to locate the other model(s) in a composition.
+window.heroScene = () => {
+  const scene = window.CK && window.CK.scene
+  if (!scene) {
+    console.log('[Herosaver] no window.CK.scene')
+    return []
+  }
+
+  const pathOf = obj => {
+    const parts = []
+    let n = obj
+    while (n && n !== scene && n.parent) {
+      parts.unshift(n.name || n.type || '(unnamed)')
+      n = n.parent
+    }
+    parts.unshift('scene')
+    return parts.join(' > ')
+  }
+
+  const rows = []
+  scene.traverse(obj => {
+    const hasMesh = !!obj.isMesh
+    const hasBake = !!obj.colorBake
+    const hasPL = !!obj._partLightGroup
+    if (!(hasMesh || hasBake || hasPL)) return
+    const pos = hasMesh && obj.geometry && obj.geometry.getAttribute ? obj.geometry.getAttribute('position') : null
+    const uv = hasMesh && obj.geometry && obj.geometry.getAttribute ? obj.geometry.getAttribute('uv') : null
+    rows.push({
+      name: obj.name || obj.type || '(unnamed)',
+      type: obj.type,
+      path: pathOf(obj),
+      mesh: hasMesh,
+      bake: hasBake,
+      partLight: hasPL,
+      skinned: !!(obj.isSkinnedMesh || (obj.skeleton && obj.skeleton.bones && obj.skeleton.bones.length)),
+      verts: pos ? pos.count : 0,
+      uv: uv ? uv.count : 0
+    })
+  })
+
+  try {
+    console.table(rows)
+  } catch (e) { /* console.table unavailable */ }
+
+  return rows
 }
