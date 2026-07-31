@@ -163,11 +163,21 @@ const cubeMeshUuids = () => {
     if (encloses) removed.add(b.uuid)
   }
 
+  if (removed.size > 0) {
+    console.log(`[Herosaver] OBJ: dropped ${removed.size} enclosing shell(s) (containment)`)
+    return removed
+  }
+
   // Detector 2: Name + boundary (case-like name AND flush against union bounds)
   for (const b of boxes) {
     if (CASE_NAME_STRONG.test(b.name) || (CASE_NAME_BOUNDARY.test(b.name) && flush(b))) {
       removed.add(b.uuid)
     }
+  }
+
+  if (removed.size > 0) {
+    console.log(`[Herosaver] OBJ: dropped ${removed.size} case-like shell(s) (name/boundary)`)
+    return removed
   }
 
   // Detector 3: Volume gap (one mesh dwarfs all others)
@@ -185,22 +195,19 @@ const cubeMeshUuids = () => {
 
   if (splitPos >= 0 && maxRatio > 1000) {
     for (let k = splitPos + 1; k < asc.length; k++) removed.add(asc[k].uuid)
+    console.log(`[Herosaver] OBJ: dropped ${removed.size} oversized shell(s) (volume gap ${maxRatio.toExponential(1)}x)`)
+    return removed
   }
 
-  // Log what was found
-  if (removed.size > 0) {
-    console.log(`[Herosaver] OBJ: dropped ${removed.size} case shell(s) (all detectors combined)`)
-  } else {
-    const top = boxes
-      .map(b => ({
-        name: b.name,
-        size: `${(b.maxX - b.minX).toFixed(2)}x${(b.maxY - b.minY).toFixed(2)}x${(b.maxZ - b.minZ).toFixed(2)}`,
-        flush: flush(b) ? 'Y' : ''
-      }))
-      .sort((a, b) => b.size.length - a.size.length)
-      .slice(0, 10)
-    console.warn(`[Herosaver] OBJ: no case detected (union ${(union.maxX - union.minX).toFixed(2)}x${(union.maxY - union.minY).toFixed(2)}x${(union.maxZ - union.minZ).toFixed(2)}, gap ${maxRatio.toExponential(1)}x). Top meshes:`, top)
-  }
+  const top = boxes
+    .map(b => ({
+      name: b.name,
+      size: `${(b.maxX - b.minX).toFixed(2)}x${(b.maxY - b.minY).toFixed(2)}x${(b.maxZ - b.minZ).toFixed(2)}`,
+      flush: flush(b) ? 'Y' : ''
+    }))
+    .sort((a, b) => b.size.length - a.size.length)
+    .slice(0, 10)
+  console.warn(`[Herosaver] OBJ: no case detected (union ${(union.maxX - union.minX).toFixed(2)}x${(union.maxY - union.minY).toFixed(2)}x${(union.maxZ - union.minZ).toFixed(2)}, gap ${maxRatio.toExponential(1)}x). Top meshes:`, top)
   return removed
 }
 
