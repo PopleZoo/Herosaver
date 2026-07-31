@@ -285,42 +285,6 @@ window.saveStl = subdivisions => {
   saveAs(new Blob([exportSTLBuffer(subdivisions)], { type: 'application/octet-stream' }), `${getName()}.stl`)
 }
 
-// Debug: list every mesh in the character so the cube/shell can be identified
-// by name. Run heroMeshes() in DevTools and look for an axis-aligned box whose
-// size encloses the whole figure - that is the cube.
-window.heroMeshes = () => {
-  const rows = []
-  const seen = new Set()
-  getExportRoots().forEach(root => {
-    root.updateMatrixWorld(true)
-    root.traverse(mesh => {
-      if (seen.has(mesh.uuid)) return
-      seen.add(mesh.uuid)
-      const geo = mesh.geometry
-      if (!geo || !(geo.attributes && geo.attributes.position)) return
-      const pos = geo.getAttribute('position')
-      let minX = Infinity; let minY = Infinity; let minZ = Infinity
-      let maxX = -Infinity; let maxY = -Infinity; let maxZ = -Infinity
-      for (let i = 0; i < pos.count; i++) {
-        const x = pos.getX(i); const y = pos.getY(i); const z = pos.getZ(i)
-        if (x < minX) minX = x; if (x > maxX) maxX = x
-        if (y < minY) minY = y; if (y > maxY) maxY = y
-        if (z < minZ) minZ = z; if (z > maxZ) maxZ = z
-      }
-      rows.push({
-        name: mesh.name || '(unnamed)',
-        type: mesh.type,
-        visible: mesh.visible,
-        skinned: !!(mesh.isSkinnedMesh || (mesh.skeleton && mesh.skeleton.bones && mesh.skeleton.bones.length)),
-        verts: pos.count,
-        size: [maxX - minX, maxY - minY, maxZ - minZ].map(s => +s.toFixed(3)).join(' x ')
-      })
-    })
-  })
-  console.table(rows)
-  return rows
-}
-
 // export character as STL file with the surrounding cube/shell removed.
 // Same pipeline as saveStl, then the cube is stripped from the exported buffer.
 window.saveCleanStl = subdivisions => {
@@ -706,7 +670,110 @@ window.heroMeshes = () => {
   return rows
 }
 
-// Debug: dump the scene hierarchy so you can see exactly where every model
+// Debug: inspect the eye meshes' UV mapping against the saved atlases. Run
+// saveTextures() first (so __herosaverAtlases is populated), then heroEyes().
+// Reports where each eye's UV island lands in the atlas (in pixels) and samples
+// that rect - plus its vertical mirror - so we can see whether the eyes sample
+// the iris/pupil detail or land on empty/orange-only atlas space.
+window.heroEyes = () => {
+  const renderer = window.CK && window.CK.renderManager && window.CK.renderManager.renderer
+  const targetByUuid = new Map()
+  findColorBakes().forEach(bake => {
+    const rgba = bake.targetsRGBA || {}
+    for (const kind of ['color', 'emissive']) {
+      const t = rgba[kind]
+      if (t && t.texture) targetByUuid.set(t.texture.uuid, t)
+    }
+  })
+
+  const atlases = window.__herosaverAtlases || new Map()
+  const rows = []
+  const seen = new Set()
+
+  const sample = (target, x, y, w, h) => {
+    const X = Math.max(0, Math.floor(x))
+    const Y = Math.max(0, Math.floor(y))
+    const W = Math.min(target.width - X, Math.max(1, Math.round(w)))
+    const H = Math.min(target.height - Y, Math.max(1, Math.round(h)))
+    const px = new Uint8Array(W * H * 4)
+    try {
+      renderer.readRenderTargetPixels(target, X, Y, W, H, px)
+    } catch (e) {
+      return null
+    }
+    let r = 0; let g = 0; let b = 0; let dark = 0
+    for (let i = 0; i < px.length; i += 4) {
+      r += px[i]; g += px[i + 1]; b += px[i + 2]
+      if (px[i] < 60 && px[i + 1] < 60 && px[i + 2] < 60) dark++
+    }
+    const n = px.length / 4
+    return { avg: `rgb(${Math.round(r / n)},${Math.round(g / n)},${Math.round(b / n)})`, dark: +(100 * dark / n).toFixed(1) + '%' }
+  }
+
+  getExportRoots().forEach(root => {
+    root.updateMatrixWorld(true)
+    root.traverse(obj => {
+      if (!obj.isMesh || seen.has(obj.uuid)) return
+      seen.add(obj.uuid)
+      const name = obj.name || obj.type || ''
+      if (!/eye|iris|pupil/i.test(name)) return
+
+      const m = Array.isArray(obj.material) ? obj.material[0] : obj.material
+      const uvps = m && m.uniforms && m.uniforms.uvPosScl ? m.uniforms.uvPosScl.value : null
+      const tex = m && m.uniforms && m.uniforms.colorAtlasMap ? m.uniforms.colorAtlasMap.value : null
+      const entry = tex ? atlases.get(tex.uuid) : null
+      const target = tex ? targetByUuid.get(tex.uuid) : null
+
+      const uv = obj.geometry && obj.geometry.getAttribute ? obj.geometry.getAttribute('uv') : null
+      let uMin = null; let uMax = null; let vMin = null; let vMax = null
+      if (uv) {
+        for (let i = 0; i < uv.count; i++) {
+          const u = uv.getX(i); const v = uv.getY(i)
+          if (uMin === null || u < uMin) uMin = u
+          if (uMax === null || u > uMax) uMax = u
+          if (vMin === null || v < vMin) vMin = v
+          if (vMax === null || v > vMax) vMax = v
+        }
+      }
+
+      const tw = (target && target.width) || (entry && entry.width) || 1
+      const th = (target && target.height) || (entry && entry.height) || 1
+      let pxRect = null
+      let sampled = null
+      let mirrored = null
+      if (uvps && uMin !== null) {
+        const rx = (uMin * uvps.z + uvps.x) * tw
+        const ry = (vMin * uvps.w + uvps.y) * th
+        const rw = ((uMax - uMin) * uvps.z) * tw
+        const rh = ((vMax - vMin) * uvps.w) * th
+        pxRect = `x${rx.toFixed(1)} y${ry.toFixed(1)} ${rw.toFixed(1)}x${rh.toFixed(1)}`
+        if (target) {
+          sampled = sample(target, rx, ry, rw, rh)
+          mirrored = sample(target, rx, th - ry - rh, rw, rh)
+        }
+      }
+
+      rows.push({
+        name,
+        atlas: entry ? entry.file : (tex ? tex.uuid.slice(0, 8) : null),
+        atlasSize: `${tw}x${th}`,
+        uvPosScl: uvps ? [uvps.x, uvps.y, uvps.z, uvps.w].map(n => +n.toFixed(4)).join(',') : 'none',
+        uvRange: uMin !== null ? `u${uMin.toFixed(3)}..${uMax.toFixed(3)} v${vMin.toFixed(3)}..${vMax.toFixed(3)}` : 'none',
+        atlasPx: pxRect,
+        avg: sampled ? sampled.avg : null,
+        dark: sampled ? sampled.dark : null,
+        darkMirror: mirrored ? mirrored.dark : null
+      })
+    })
+  })
+
+  try {
+    console.log('[Herosaver] eye meshes:')
+    console.table(rows)
+  } catch (e) { /* console.table unavailable */ }
+
+  return rows
+}
 // lives (main figure, mount/familiar/companion). Lists only nodes that are a
 // mesh or carry a colorBake/_partLightGroup, with their full ancestor path.
 // Run heroScene() in DevTools to locate the other model(s) in a composition.
