@@ -122,13 +122,23 @@ const cubeMeshUuids = () => {
   })
   if (boxes.length === 0) return new Set()
 
+  // Filter out absurdly large meshes (>100 units) that are clearly broken/erroneous
+  // (e.g., skinned meshes with bone matrix issues). These corrupt the union bounds.
+  const validBoxes = boxes.filter(b => {
+    const dx = b.maxX - b.minX
+    const dy = b.maxY - b.minY
+    const dz = b.maxZ - b.minZ
+    return dx <= 100 && dy <= 100 && dz <= 100
+  })
+  const boxesForUnion = validBoxes.length > 0 ? validBoxes : boxes
+
   const union = {
-    minX: Math.min(...boxes.map(b => b.minX)),
-    minY: Math.min(...boxes.map(b => b.minY)),
-    minZ: Math.min(...boxes.map(b => b.minZ)),
-    maxX: Math.max(...boxes.map(b => b.maxX)),
-    maxY: Math.max(...boxes.map(b => b.maxY)),
-    maxZ: Math.max(...boxes.map(b => b.maxZ))
+    minX: Math.min(...boxesForUnion.map(b => b.minX)),
+    minY: Math.min(...boxesForUnion.map(b => b.minY)),
+    minZ: Math.min(...boxesForUnion.map(b => b.minZ)),
+    maxX: Math.max(...boxesForUnion.map(b => b.maxX)),
+    maxY: Math.max(...boxesForUnion.map(b => b.maxY)),
+    maxZ: Math.max(...boxesForUnion.map(b => b.maxZ))
   }
   const diag = Math.sqrt(
     (union.maxX - union.minX) ** 2 +
