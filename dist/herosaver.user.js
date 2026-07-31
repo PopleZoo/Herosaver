@@ -1,21 +1,25 @@
 // ==UserScript==
 // @name         Herosaver
 // @namespace    https://github.com/PopleZoo/Herosaver
-// @version      1.4.0
+// @version      1.4.1
 // @description  Save Configuration and STLs from websites using the THREE.JS framework
 // @author       reformagus&D1amondweaver
 // @homepageURL  https://github.com/PopleZoo/Herosaver
 // @match        *://*.heroforge.com/*
 // @grant        GM_registerMenuCommand
 // @run-at       document-idle
-// @downloadURL  https://raw.githubusercontent.com/PopleZoo/Herosaver/UVCoords/dist/herosaver.js
-// @updateURL    https://raw.githubusercontent.com/PopleZoo/Herosaver/UVCoords/dist/herosaver.js
+// @downloadURL  https://cdn.jsdelivr.net/gh/PopleZoo/Herosaver@UVCoords/dist/herosaver.user.js
+// @updateURL    https://cdn.jsdelivr.net/gh/PopleZoo/Herosaver@UVCoords/dist/herosaver.user.js
 // ==/UserScript==
 
 (function () {
   'use strict'
 
-  const SRC = 'https://raw.githubusercontent.com/PopleZoo/Herosaver/UVCoords/dist/herosaver.js'
+  // jsDelivr instead of raw.githubusercontent.com: raw's CDN ignores the
+  // cache-busting query and served stale bundles for several minutes after each
+  // push, which made every test run old code. jsDelivr reflects new commits
+  // within a minute, and the query keeps the browser from caching it too.
+  const SRC = 'https://cdn.jsdelivr.net/gh/PopleZoo/Herosaver@UVCoords/dist/herosaver.js'
 
   // Inject into the page context so the loaded code can reach window.CK, THREE, etc.
   // A cache-busting query is appended so the freshest published bundle always

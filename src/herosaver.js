@@ -6,6 +6,10 @@ import { saveAs } from 'file-saver'
 import { character, getName, process, bakeSkinnedVertex } from './utils'
 import { removeCubeFromSTL } from './cube-remover'
 
+// Bump with each release so stale CDN/browser copies are easy to spot from the
+// console: window.herosaverVersion.
+window.herosaverVersion = '1.4.1'
+
 // ─── scene discovery ────────────────────────────────────────────────────────
 // HeroForge keeps the whole composition (figure + mounts + companions) inside
 // window.CK.scene, but the exporter used to reach the color bake via a
