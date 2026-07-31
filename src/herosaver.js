@@ -947,22 +947,23 @@ window.heroCropEyes = () => {
 window.heroEyeShader = () => {
   const renderer = window.CK && window.CK.renderManager && window.CK.renderManager.renderer
   const programs = (renderer && renderer.info && renderer.info.programs) || []
+  console.log('[Herosaver] total compiled programs:', programs.length)
   let found = 0
   for (const p of programs) {
-    const prog = p.program
-    const u = p.uniforms || {}
-    if (u.irisAndDistanceTexture) {
+    const prog = p && p.program
+    if (!prog) continue
+    const fs = prog.fragmentShader || ''
+    const vs = prog.vertexShader || ''
+    if (/irisAndDistanceTexture|scleraTexture|clutMap/i.test(fs + vs)) {
       found++
-      console.log(`[Herosaver] eye program #${found}, uniforms:`, Object.keys(u))
+      console.log(`[Herosaver] eye program #${found}`)
       console.log('[Herosaver] --- fragmentShader ---')
-      console.log(prog.fragmentShader)
-      if (prog.vertexShader) {
-        console.log('[Herosaver] --- vertexShader ---')
-        console.log(prog.vertexShader)
-      }
+      console.log(fs)
+      console.log('[Herosaver] --- vertexShader ---')
+      console.log(vs)
     }
   }
-  if (!found) console.warn('[Herosaver] no eye program found in renderer.info.programs')
+  if (!found) console.warn('[Herosaver] no eye program found by shader-source match')
 }
 
 // lives (main figure, mount/familiar/companion). Lists only nodes that are a
