@@ -4,7 +4,7 @@ import { Matrix4, Vector3 } from 'three'
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
 import { saveAs } from 'file-saver'
 import { character, getName, process, bakeSkinnedVertex } from './utils'
-import { removeCubeFromSTL, parseSTL, findConnectedComponents, analyzeShell } from './cube-remover'
+import { parseSTL, findConnectedComponents, analyzeShell } from './cube-remover'
 
 // Sanitize strings for use in filenames and material names (replace spaces, special chars)
 const sanitize = s => s.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
@@ -240,92 +240,23 @@ const exportSTLBuffer = subdivisions => {
     : view
 }
 
-// export full scene as JSON (for debugging)
-window.saveJson = () => saveAs(new Blob([JSON.stringify(window.CK.data.getJson())], { type: 'application/json;charset=utf-8' }), `${sanitize(getName())}.json`)
-
-// Debug: validate the corrected bakeSkinnedVertex formula against the live shader.
-// Call debugSkin() in DevTools after loading herosaver.js to verify skinning output.
-window.debugSkin = () => {
-  let mesh = null
-  character.traverseVisible(o => { if (o.isSkinnedMesh && o.name === 'bodyLower') mesh = o })
-  if (!mesh) { character.traverseVisible(o => { if (o.isSkinnedMesh && !mesh) mesh = o }) }
-  if (!mesh) { console.log('no skinned mesh found'); return }
-
-  const geo = mesh.geometry
-  const skel = mesh.skeleton
-
-  // Sawtooth weight decoder (mirrors shader: abs(mod(v+1,2)-1))
-  const decodeWeight = v => { let m = (v + 1) % 2; if (m < 0) m += 2; return Math.abs(m - 1) }
-
-  // mat4 * vec3 (w=1), Three.js column-major
-  const mulMV = (m, x, y, z) => [
-    m[0] * x + m[4] * y + m[8] * z + m[12],
-    m[1] * x + m[5] * y + m[9] * z + m[13],
-    m[2] * x + m[6] * y + m[10] * z + m[14]
-  ]
-  const mulMM = (a, b) => {
-    const r = new Array(16).fill(0)
-    for (let c = 0; c < 4; c++) for (let row = 0; row < 4; row++) for (let k = 0; k < 4; k++) r[c * 4 + row] += a[k * 4 + row] * b[c * 4 + k]
-    return r
-  }
-
-  // Verify vertex 0
-  const posAttr = geo.getAttribute('position')
-  let vx = posAttr.getX(0); let vy = posAttr.getY(0); let vz = posAttr.getZ(0)
-
-  // Apply morph targets (matches shader)
-  const infl = mesh.morphTargetInfluences || []
-  for (let mt = 0; mt < infl.length; mt++) {
-    if (!infl[mt]) continue
-    const a = geo.getAttribute('morphTarget' + mt)
-    if (!a) continue
-    vx += a.getX(0) * infl[mt]; vy += a.getY(0) * infl[mt]; vz += a.getZ(0) * infl[mt]
-  }
-  console.log('morphed vertex[0]:', [vx, vy, vz].map(v => v.toFixed(6)))
-
-  // Apply bindMatrix
-  const bm = mesh.bindMatrix.elements
-  ;[vx, vy, vz] = mulMV(bm, vx, vy, vz)
-
-  // Weighted skinning over skin0, skin1, skin2
-  const bmi = mesh.bindMatrixInverse.elements
-  let sx = 0; let sy = 0; let sz = 0; let skinSum = 0
-  const active = (geo.skinNames || ['skin0']).slice(0, 3)
-  active.forEach(sname => {
-    const attr = geo.getAttribute(sname)
-    if (!attr) return
-    const pairs = attr.itemSize / 2
-    const base = 0 * attr.itemSize
-    for (let p = 0; p < pairs; p++) {
-      const bi = Math.round(attr.array[base + p * 2])
-      const w = decodeWeight(attr.array[base + p * 2 + 1])
-      if (!w) continue
-      const bone = skel.bones[bi]
-      const inv = skel.boneInverses[bi]
-      if (!bone || !inv) continue
-      const mat = mulMM(bone.matrixWorld.elements, inv.elements)
-      const [cx, cy, cz] = mulMV(mat, vx, vy, vz)
-      console.log(`  bone[${bi}] "${bone.name}" w=${w.toFixed(4)} → [${cx.toFixed(4)}, ${cy.toFixed(4)}, ${cz.toFixed(4)}]`)
-      sx += cx * w; sy += cy * w; sz += cz * w; skinSum += w
+const exportSTLBufferClean = subdivisions => {
+  const group = process(getExportRoots(), subdivisions, !!character.data.mirroredPose)
+  // Remove display case meshes by STRONG name (same as OBJ: vault*, productVis*, loRez, dome, cage, skydome)
+  const STRONG_NAMES = /vault|productVis|loRez|dome|cage|skydome/i
+  group.traverse(obj => {
+    if (obj.isMesh && STRONG_NAMES.test(obj.name || obj.type || '')) {
+      obj.removeFromParent()
     }
   })
-  if (skinSum > 0) { sx /= skinSum; sy /= skinSum; sz /= skinSum }
-  const [rx, ry, rz] = mulMV(bmi, sx, sy, sz)
-  console.log('skinSum:', skinSum.toFixed(6))
-  console.log('final baked vertex[0] (world):', [rx, ry, rz].map(v => v.toFixed(4)))
-  console.log('Expected: right toe area, roughly [-0.41..0.06..0.75] or post-transform')
+  const view = new STLExporter().parse(group, { binary: true })
+  return view.buffer
+    ? view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength)
+    : view
 }
 
-// export character as STL file, cube included (binary to avoid JS string length
-// limits on large models). Kept for callers that want the raw, uncleaned export.
-window.saveStl = subdivisions => {
-  saveAs(new Blob([exportSTLBuffer(subdivisions)], { type: 'application/octet-stream' }), `${sanitize(getName())}.stl`)
-}
-
-// export character as STL file with the surrounding cube/shell removed.
-// Same pipeline as saveStl, then the cube is stripped from the exported buffer.
 window.saveCleanStl = subdivisions => {
-  const cleaned = removeCubeFromSTL(exportSTLBuffer(subdivisions))
+  const cleaned = exportSTLBufferClean(subdivisions)
   saveAs(new Blob([cleaned], { type: 'application/octet-stream' }), `${sanitize(getName())}_clean.stl`)
 }
 
