@@ -86,13 +86,19 @@ const worldAABB = obj => {
   return { minX, minY, minZ, maxX, maxY, maxZ }
 }
 
+// Names HeroForge uses for the display case / dome and other enclosing shells.
+const CASE_NAME = /sky|dome|case|display|cage|cube|glass|shell|env/i
+
 // Identifies the HeroForge wrapping cube / display case ("dome") so OBJ export
-// can skip it. Detection is containment-based: the case is the shell whose
-// world AABB encloses the union of every other exported mesh, so it works no
-// matter how the case is modelled (single mesh, panels, tight or huge) and no
-// matter how many real parts exist. Falls back to the volume-gap heuristic when
-// nothing encloses the union (e.g. the model pokes out of the case). Returns a
-// Set of mesh uuids to skip.
+// can skip it. Three independent detectors, any of which can flag a shell:
+//   1. Containment: a mesh whose world AABB encloses the union of every other
+//      exported mesh (single-piece case, works at any size ratio).
+//   2. Name + boundary: a mesh whose name looks like a case (sky/dome/case/
+//      glass/...) and whose AABB touches the union's outer surface (covers the
+//      multi-panel "dome" that sits flush around the figure).
+//   3. Volume gap: one mesh dwarfs every real body part by many orders of
+//      magnitude (the original STL heuristic).
+// Returns a Set of mesh uuids to skip.
 const cubeMeshUuids = () => {
   const boxes = []
   const seen = new Set()
@@ -103,7 +109,7 @@ const cubeMeshUuids = () => {
       seen.add(obj.uuid)
       try {
         const b = worldAABB(obj)
-        if (b) boxes.push({ uuid: obj.uuid, ...b })
+        if (b) boxes.push({ uuid: obj.uuid, name: obj.name || obj.type, ...b })
       } catch (e) { /* unreadable mesh - ignore for case detection */ }
     })
   })
@@ -122,9 +128,14 @@ const cubeMeshUuids = () => {
     (union.maxY - union.minY) ** 2 +
     (union.maxZ - union.minZ) ** 2
   )
-  const eps = 1e-6 * Math.max(diag, 1e-9)
+  const eps = 1e-4 * Math.max(diag, 1e-9)
 
   const removed = new Set()
+  const flush = b =>
+    b.minX <= union.minX + eps || b.maxX >= union.maxX - eps ||
+    b.minY <= union.minY + eps || b.maxY >= union.maxY - eps ||
+    b.minZ <= union.minZ + eps || b.maxZ >= union.maxZ - eps
+
   for (const b of boxes) {
     const encloses =
       b.minX <= union.minX + eps && b.maxX >= union.maxX - eps &&
@@ -133,7 +144,15 @@ const cubeMeshUuids = () => {
     if (encloses) removed.add(b.uuid)
   }
 
-  if (removed.size > 0) {
+  if (removed.size === 0) {
+    for (const b of boxes) {
+      if (CASE_NAME.test(b.name) && flush(b)) removed.add(b.uuid)
+    }
+    if (removed.size > 0) {
+      console.log(`[Herosaver] OBJ: dropped ${removed.size} case-like shell(s) (name + boundary)`)
+      return removed
+    }
+  } else {
     console.log(`[Herosaver] OBJ: dropped ${removed.size} enclosing shell(s) (display case)`)
     return removed
   }
@@ -155,7 +174,15 @@ const cubeMeshUuids = () => {
     for (let k = splitPos + 1; k < asc.length; k++) removed.add(asc[k].uuid)
     console.log(`[Herosaver] OBJ: dropped ${removed.size} oversized shell(s) (volume gap ${maxRatio.toExponential(1)}x)`)
   } else {
-    console.warn(`[Herosaver] OBJ: no enclosing shell found (union ${(union.maxX - union.minX).toFixed(2)}x${(union.maxY - union.minY).toFixed(2)}x${(union.maxZ - union.minZ).toFixed(2)}, largest gap ${maxRatio.toExponential(1)}x)`)
+    const top = boxes
+      .map(b => ({
+        name: b.name,
+        size: `${(b.maxX - b.minX).toFixed(2)}x${(b.maxY - b.minY).toFixed(2)}x${(b.maxZ - b.minZ).toFixed(2)}`,
+        flush: flush(b) ? 'Y' : ''
+      }))
+      .sort((a, b) => b.size.length - a.size.length)
+      .slice(0, 10)
+    console.warn(`[Herosaver] OBJ: no case detected (union ${(union.maxX - union.minX).toFixed(2)}x${(union.maxY - union.minY).toFixed(2)}x${(union.maxZ - union.minZ).toFixed(2)}, gap ${maxRatio.toExponential(1)}x). Top meshes:`, top)
   }
   return removed
 }
@@ -639,6 +666,38 @@ window.heroBakes = () => {
   } catch (e) { /* console.table unavailable */ }
 
   return { bakes, meshes }
+}
+
+// Debug: dump every mesh that would be exported, with its world AABB and
+// whether it is a candidate for display-case removal. Run heroMeshes() in
+// DevTools to identify the dome panels on a real composition.
+window.heroMeshes = () => {
+  const rows = []
+  const seen = new Set()
+  getExportRoots().forEach(root => {
+    root.updateMatrixWorld(true)
+    root.traverse(obj => {
+      if (!obj.isMesh || seen.has(obj.uuid)) return
+      seen.add(obj.uuid)
+      const b = worldAABB(obj)
+      const m = Array.isArray(obj.material) ? obj.material[0] : obj.material
+      rows.push({
+        name: obj.name || obj.type || '(unnamed)',
+        type: obj.type,
+        material: m ? (m.type || m.constructor.name) : null,
+        skinned: !!(obj.isSkinnedMesh || (obj.skeleton && obj.skeleton.bones && obj.skeleton.bones.length)),
+        size: b ? `${(b.maxX - b.minX).toFixed(2)}x${(b.maxY - b.minY).toFixed(2)}x${(b.maxZ - b.minZ).toFixed(2)}` : '(no geometry)',
+        caseName: CASE_NAME.test(obj.name || obj.type) ? 'Y' : ''
+      })
+    })
+  })
+
+  try {
+    console.log('[Herosaver] exported meshes:')
+    console.table(rows)
+  } catch (e) { /* console.table unavailable */ }
+
+  return rows
 }
 
 // Debug: dump the scene hierarchy so you can see exactly where every model
