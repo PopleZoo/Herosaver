@@ -778,6 +778,74 @@ window.heroEyes = () => {
 
   return rows
 }
+
+// Debug: scan each color atlas for the orange iris circles and report which
+// 128px cells contain them. Run window.heroIris() to compare against the eye
+// uvPosScl rects from heroEyes() (right eye samples cell ~(24,8), left ~(23,8)).
+// If the irises live in different cells, the eye UV remap is off.
+window.heroIris = () => {
+  const renderer = window.CK && window.CK.renderManager && window.CK.renderManager.renderer
+  if (!renderer) {
+    console.log('[Herosaver] no renderer available')
+    return []
+  }
+  const atlases = window.__herosaverAtlases || new Map()
+  const report = []
+
+  findColorBakes().forEach(bake => {
+    const target = bake.targetsRGBA && bake.targetsRGBA.color
+    if (!target || !target.texture) return
+    const w = target.width; const h = target.height
+    const px = new Uint8Array(w * h * 4)
+    try {
+      renderer.readRenderTargetPixels(target, 0, 0, w, h, px)
+    } catch (e) {
+      return
+    }
+
+    const cell = 128
+    const ncx = Math.ceil(w / cell)
+    const ncy = Math.ceil(h / cell)
+    const counts = new Int32Array(ncx * ncy)
+    for (let i = 0; i < w * h; i++) {
+      const r = px[i * 4]; const g = px[i * 4 + 1]; const b = px[i * 4 + 2]
+      if (r > 110 && g > 50 && g < 180 && b < 130 && r > b + 40) {
+        const x = i % w; const y = (i / w) | 0
+        counts[((x / cell) | 0) + ((y / cell) | 0) * ncx]++
+      }
+    }
+
+    const cells = []
+    for (let cy = 0; cy < ncy; cy++) {
+      for (let cx = 0; cx < ncx; cx++) {
+        const c = counts[cx + cy * ncx]
+        if (c > 200) {
+          cells.push({
+            cell: `${cx},${cy}`,
+            uv: `(${(cx * cell / w).toFixed(3)},${(cy * cell / h).toFixed(3)})`,
+            px: c
+          })
+        }
+      }
+    }
+    cells.sort((a, b) => b.px - a.px)
+
+    const entry = atlases.get(target.texture.uuid)
+    report.push({
+      atlas: entry ? entry.file : target.texture.uuid.slice(0, 8),
+      size: `${w}x${h}`,
+      orangeCells: cells.slice(0, 10)
+    })
+  })
+
+  try {
+    console.log('[Herosaver] iris locations (orange clusters, 128px cells):')
+    console.table(report)
+  } catch (e) { /* console.table unavailable */ }
+
+  return report
+}
+
 // lives (main figure, mount/familiar/companion). Lists only nodes that are a
 // mesh or carry a colorBake/_partLightGroup, with their full ancestor path.
 // Run heroScene() in DevTools to locate the other model(s) in a composition.
