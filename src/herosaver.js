@@ -6,6 +6,9 @@ import { saveAs } from 'file-saver'
 import { character, getName, process, bakeSkinnedVertex } from './utils'
 import { parseSTL, findConnectedComponents, analyzeShell } from './cube-remover'
 
+// Export process for debugging
+window.process = process
+
 // Sanitize strings for use in filenames and material names (replace spaces, special chars)
 const sanitize = s => s.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
 
