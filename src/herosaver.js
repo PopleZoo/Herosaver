@@ -67,7 +67,8 @@ const getExportRoots = () => {
 // World-space bounding-box volume of a mesh, using the same baked vertices the
 // export uses (skinning + world transform, before the STL/OBJ rotation).
 const worldVolume = obj => {
-  const pos = obj.geometry.getAttribute('position')
+  const pos = obj.geometry && obj.geometry.getAttribute ? obj.geometry.getAttribute('position') : null
+  if (!pos) return 0
   const isSkinned = obj.isSkinnedMesh || (obj.skeleton && obj.skeleton.bones && obj.skeleton.bones.length > 0)
   let minX = Infinity; let minY = Infinity; let minZ = Infinity
   let maxX = -Infinity; let maxY = -Infinity; let maxZ = -Infinity
@@ -95,7 +96,10 @@ const cubeMeshUuids = () => {
     root.traverse(obj => {
       if (!obj.isMesh || seen.has(obj.uuid)) return
       seen.add(obj.uuid)
-      const vol = worldVolume(obj)
+      let vol = 0
+      try {
+        vol = worldVolume(obj)
+      } catch (e) { /* unreadable mesh - ignore for cube detection */ }
       if (vol > 0) entries.push({ uuid: obj.uuid, vol })
     })
   })
@@ -313,8 +317,15 @@ const saveObjInner = () => {
   getExportRoots().forEach(root => root.updateMatrixWorld(true))
 
   // The wrapping cube / "display case" is removed from the OBJ just like the
-  // STL export does, so the geometry you get is only the actual model.
-  const cubeMeshes = cubeMeshUuids()
+  // STL export does, so the geometry you get is only the actual model. If
+  // detection fails for any reason, export anyway (cube included) rather than
+  // losing the whole OBJ.
+  let cubeMeshes = new Set()
+  try {
+    cubeMeshes = cubeMeshUuids()
+  } catch (e) {
+    console.warn('[Herosaver] cube detection failed, exporting with the wrapping cube:', e)
+  }
 
   const seenMeshes = new Set()
   let vertexOffset = 1
