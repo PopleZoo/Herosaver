@@ -6,6 +6,9 @@ import { saveAs } from 'file-saver'
 import { character, getName, process, bakeSkinnedVertex } from './utils'
 import { removeCubeFromSTL } from './cube-remover'
 
+// Sanitize strings for use in filenames and material names (replace spaces, special chars)
+const sanitize = s => s.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
+
 // Bump with each release so stale CDN/browser copies are easy to spot from the
 // console: window.herosaverVersion.
 window.herosaverVersion = '1.5.2'
@@ -234,7 +237,7 @@ const exportSTLBuffer = subdivisions => {
 }
 
 // export full scene as JSON (for debugging)
-window.saveJson = () => saveAs(new Blob([JSON.stringify(window.CK.data.getJson())], { type: 'application/json;charset=utf-8' }), `${getName()}.json`)
+window.saveJson = () => saveAs(new Blob([JSON.stringify(window.CK.data.getJson())], { type: 'application/json;charset=utf-8' }), `${sanitize(getName())}.json`)
 
 // Debug: validate the corrected bakeSkinnedVertex formula against the live shader.
 // Call debugSkin() in DevTools after loading herosaver.js to verify skinning output.
@@ -312,14 +315,14 @@ window.debugSkin = () => {
 // export character as STL file, cube included (binary to avoid JS string length
 // limits on large models). Kept for callers that want the raw, uncleaned export.
 window.saveStl = subdivisions => {
-  saveAs(new Blob([exportSTLBuffer(subdivisions)], { type: 'application/octet-stream' }), `${getName()}.stl`)
+  saveAs(new Blob([exportSTLBuffer(subdivisions)], { type: 'application/octet-stream' }), `${sanitize(getName())}.stl`)
 }
 
 // export character as STL file with the surrounding cube/shell removed.
 // Same pipeline as saveStl, then the cube is stripped from the exported buffer.
 window.saveCleanStl = subdivisions => {
   const cleaned = removeCubeFromSTL(exportSTLBuffer(subdivisions))
-  saveAs(new Blob([cleaned], { type: 'application/octet-stream' }), `${getName()}_clean.stl`)
+  saveAs(new Blob([cleaned], { type: 'application/octet-stream' }), `${sanitize(getName())}_clean.stl`)
 }
 
 // export character as OBJ file with UVs and a MTL referencing the saved color
@@ -500,7 +503,7 @@ ${faces.join('\n')}
 
   console.log(`[Herosaver] saveObj: built ${vertices.length} vertices / ${uvs.length} UVs / ${faces.length} faces (${(obj.length / 1024 / 1024).toFixed(1)} MB)`)
   try {
-    saveAs(new Blob([obj]), `${getName()}.obj`)
+    saveAs(new Blob([obj]), `${sanitize(getName())}.obj`)
     console.log('[Herosaver] saveObj: .obj download triggered')
   } catch (e) {
     console.error('[Herosaver] failed to save OBJ:', e)
@@ -521,7 +524,7 @@ ${faces.join('\n')}
   }
 
   try {
-    saveAs(new Blob([mtl.join('\n')], { type: 'text/plain' }), `${getName()}.mtl`)
+    saveAs(new Blob([mtl.join('\n')], { type: 'text/plain' }), `${sanitize(getName())}.mtl`)
     console.log('[Herosaver] saveObj: .mtl download triggered')
   } catch (e) {
     console.error('[Herosaver] failed to save MTL:', e)
@@ -772,7 +775,7 @@ window.saveTextures = () => {
     const base = kind === 'emissive' ? 'emissiveAtlas' : 'colorAtlas'
     nameCounts[base] = (nameCounts[base] || 0) + 1
     const suffix = nameCounts[base] === 1 ? '' : `_${nameCounts[base]}`
-    const file = `${getName()}_${base}${suffix}.png`
+    const file = `${sanitize(getName())}_${base}${suffix}.png`
 
     // readRenderTargetPixels returns rows bottom-to-top; flip them so the PNG
     // is stored top-down (v=0 at the bottom), exactly how the shader samples
