@@ -73,6 +73,7 @@ const getExportRoots = () => {
   findCompositionRoots().forEach(add)
   return [...roots.values()]
 }
+window.getExportRoots = getExportRoots
 
 // World-space axis-aligned bounding box of a mesh, using the same baked
 // vertices the export uses (skinning + world transform). Returns null when the
