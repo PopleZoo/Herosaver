@@ -8,7 +8,7 @@ import { removeCubeFromSTL } from './cube-remover'
 
 // Bump with each release so stale CDN/browser copies are easy to spot from the
 // console: window.herosaverVersion.
-window.herosaverVersion = '1.4.2'
+window.herosaverVersion = '1.5.0'
 
 // ─── scene discovery ────────────────────────────────────────────────────────
 // HeroForge keeps the whole composition (figure + mounts + companions) inside
@@ -502,6 +502,175 @@ ${faces.join('\n')}
   }
 }
 
+// ─── eye compositing ─────────────────────────────────────────────────────────
+// The color-atlas bake renders creature eyes through the *simplified*
+// surfaceBake path (solid sclera2 + solid iris1 disc), so the exported eye
+// cells read as flat coloured discs with no pupil, iris gradient or sclera
+// detail. The live eye shader (shaderkit.js) instead blends the scleraTexture /
+// irisAndDistanceTexture red-channel gradients against the sclera0-2 / iris0-2
+// basis colours, carves the pupil from the iris alpha, and shades the limbal
+// ring from the distance map. We replicate that full path per pixel while the
+// atlas PNG is still in memory, so the saved texture carries the real eye.
+
+const eyePixels = texture => {
+  if (!texture) return null
+  const img = texture.image
+  if (!img || !img.width || !img.height) return null
+  const w = img.width; const h = img.height
+  let raw = null
+  if (img.data instanceof Uint8Array) {
+    raw = img.data
+  } else {
+    try {
+      const c = document.createElement('canvas')
+      c.width = w; c.height = h
+      const ctx = c.getContext('2d')
+      ctx.drawImage(img, 0, 0, w, h)
+      raw = ctx.getImageData(0, 0, w, h).data
+    } catch (e) {
+      console.warn('[Herosaver] could not read eye texture:', e)
+      return null
+    }
+  }
+  const data = new Uint8Array(raw)
+  if (texture.flipY !== false) {
+    for (let y = 0; y < h; y++) {
+      data.set(raw.subarray((h - 1 - y) * w * 4, (h - y) * w * 4), y * w * 4)
+    }
+  }
+  return { data, w, h }
+}
+
+const eyeColor3 = value => {
+  if (!value) return { r: 0, g: 0, b: 0 }
+  if (value.isColor) return { r: value.r, g: value.g, b: value.b }
+  if (value.isVector3) return { r: value.x, g: value.y, b: value.z }
+  if (Array.isArray(value)) return { r: value[0], g: value[1], b: value[2] }
+  return { r: value.x || 0, g: value.y || 0, b: value.z || 0 }
+}
+
+const buildEyeSampler = material => {
+  const u = material.uniforms
+  const sclera = eyePixels(u.scleraTexture && u.scleraTexture.value)
+  const iris = eyePixels(u.irisAndDistanceTexture && u.irisAndDistanceTexture.value)
+  if (!sclera || !iris) return null
+  return {
+    sclera0: eyeColor3(u.sclera0 && u.sclera0.value),
+    sclera1: eyeColor3(u.sclera1 && u.sclera1.value),
+    sclera2: eyeColor3(u.sclera2 && u.sclera2.value),
+    iris0: eyeColor3(u.iris0 && u.iris0.value),
+    iris1: eyeColor3(u.iris1 && u.iris1.value),
+    iris2: eyeColor3(u.iris2 && u.iris2.value),
+    pupil: eyeColor3(u.pupil && u.pupil.value),
+    limbus: +(u.limbus && u.limbus.value) || 0,
+    irisSize: +(u.irisSize && u.irisSize.value) || 0.5,
+    irisRotate: +(u.irisRotate && u.irisRotate.value) || 0,
+    sclera: sclera,
+    iris: iris
+  }
+}
+
+// The eye shader, in plain JS. `uv` is the eye mesh's local UV (0-1) inside its
+// atlas cell; returns the sRGB albedo the color bake would output.
+const eyeShade = (eye, u, v) => {
+  const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x))
+  const mix = (a, b, t) => a + (b - a) * t
+  const sample = (tex, su, sv) => {
+    const x = clamp(Math.floor(su * (tex.w - 1)), 0, tex.w - 1)
+    const y = clamp(Math.floor(sv * (tex.h - 1)), 0, tex.h - 1)
+    const i = (y * tex.w + x) * 4
+    return { r: tex.data[i] / 255, g: tex.data[i + 1] / 255, b: tex.data[i + 2] / 255, a: tex.data[i + 3] / 255 }
+  }
+
+  const veins = sample(eye.sclera, u, v)
+  const w0 = clamp(1 - 2 * veins.r, 0, 1)
+  const w1 = clamp(1 - Math.abs(1 - 2 * veins.r), 0, 1)
+  const w2 = clamp(2 * veins.r - 1, 0, 1)
+  let r = eye.sclera0.r * w0 + eye.sclera1.r * w1 + eye.sclera2.r * w2
+  let g = eye.sclera0.g * w0 + eye.sclera1.g * w1 + eye.sclera2.g * w2
+  let b = eye.sclera0.b * w0 + eye.sclera1.b * w1 + eye.sclera2.b * w2
+
+  const iux0 = u - 0.5
+  const iuy0 = v - 0.5
+  const sr = Math.sin(eye.irisRotate)
+  const cr = Math.cos(eye.irisRotate)
+  const iux = (cr * iux0 + sr * iuy0) / eye.irisSize + 0.5
+  const iuy = (-sr * iux0 + cr * iuy0) / eye.irisSize + 0.5
+
+  if (iux > 0 && iuy > 0 && iux < 1 && iuy < 1) {
+    const ramp = sample(eye.iris, iux, iuy * 0.5)
+    const dist = sample(eye.iris, iux, iuy * 0.5 + 0.5)
+    const radius = 1 - dist.r * 2
+    let irisA = ramp.a
+    if (irisA > 0.55) {
+      r = eye.pupil.r; g = eye.pupil.g; b = eye.pupil.b
+    }
+    irisA = clamp(1 - Math.abs(1 - 2 * irisA), 0, 1)
+    const limbusBlend = clamp(1 + (radius - 1) / Math.max(eye.limbus, 1e-3), 0, 1)
+    const limbusShadow = clamp(1 + (radius - 1) / (2 * Math.max(eye.limbus, 1e-3)), 0, 1)
+    irisA *= 1 - limbusBlend
+    const iw0 = clamp(1 - 2 * ramp.r, 0, 1)
+    const iw1 = clamp(1 - Math.abs(1 - 2 * ramp.r), 0, 1)
+    const iw2 = clamp(2 * ramp.r - 1, 0, 1)
+    let ir = eye.iris0.r * iw0 + eye.iris1.r * iw1 + eye.iris2.r * iw2
+    let ig = eye.iris0.g * iw0 + eye.iris1.g * iw1 + eye.iris2.g * iw2
+    let ib = eye.iris0.b * iw0 + eye.iris1.b * iw1 + eye.iris2.b * iw2
+    const ish = 1 - limbusShadow
+    ir *= ish; ig *= ish; ib *= ish
+    r = mix(r, ir, irisA)
+    g = mix(g, ig, irisA)
+    b = mix(b, ib, irisA)
+  }
+
+  return [clamp(r, 0, 1), clamp(g, 0, 1), clamp(b, 0, 1)]
+}
+
+// Paint a faithful eye over every eye cell in the just-flipped atlas pixels.
+const compositeEyes = (flipped, atlasW, atlasH, atlasTexture) => {
+  const eyes = []
+  const seen = new Set()
+  getExportRoots().forEach(root => {
+    root.traverse(obj => {
+      if (!obj.isMesh || seen.has(obj.uuid)) return
+      seen.add(obj.uuid)
+      const m = Array.isArray(obj.material) ? obj.material[0] : obj.material
+      if (!m || !m.uniforms) return
+      const irisTex = m.uniforms.irisAndDistanceTexture && m.uniforms.irisAndDistanceTexture.value
+      if (!irisTex || !irisTex.isTexture) return
+      const atlasTex = m.uniforms.colorAtlasMap && m.uniforms.colorAtlasMap.value
+      if (!atlasTex || atlasTex.uuid !== atlasTexture.uuid) return
+      const uvps = m.uniforms.uvPosScl && m.uniforms.uvPosScl.value
+      if (!uvps) return
+      const eye = buildEyeSampler(m)
+      if (!eye) return
+      eyes.push({ name: obj.name || obj.type, eye, uvps })
+    })
+  })
+  if (!eyes.length) return
+
+  for (const e of eyes) {
+    const x0 = Math.round(e.uvps.x * atlasW)
+    const y0 = Math.round(e.uvps.y * atlasH)
+    const cw = Math.max(1, Math.round(e.uvps.z * atlasW))
+    const ch = Math.max(1, Math.round(e.uvps.w * atlasH))
+    for (let fr = Math.max(0, atlasH - y0 - ch); fr < Math.min(atlasH, atlasH - y0); fr++) {
+      const v = (atlasH - 1 - fr - y0) / ch
+      for (let px = Math.max(0, x0); px < Math.min(atlasW, x0 + cw); px++) {
+        const u = (px - x0) / cw
+        const rgb = eyeShade(e.eye, u, v)
+        const i = (fr * atlasW + px) * 4
+        flipped[i] = Math.round(rgb[0] * 255)
+        flipped[i + 1] = Math.round(rgb[1] * 255)
+        flipped[i + 2] = Math.round(rgb[2] * 255)
+        flipped[i + 3] = 255
+      }
+    }
+    console.log(`[Herosaver] composited eye "${e.name}" into cell (${x0},${y0}) ${cw}x${ch} (irisSize=${e.eye.irisSize}, limbus=${e.eye.limbus}, iris=${toHex(e.eye.iris1)}, sclera=${toHex(e.eye.sclera2)}, pupil=${toHex(e.eye.pupil)})`)
+  }
+}
+
+const toHex = c => `#${[c.r, c.g, c.b].map(x => Math.round(Math.min(1, Math.max(0, x)) * 255).toString(16).padStart(2, '0')).join('')}`
+
 // Every distinct bake in the scene is exported, so a composition with multiple
 // models (rider + mount/familiar) produces one atlas per model. Each PNG is
 // flipped to GL orientation (v=0 at the bottom) so it matches the shader's
@@ -547,6 +716,16 @@ window.saveTextures = () => {
     const flipped = new Uint8Array(w * h * 4)
     for (let y = 0; y < h; y++) {
       flipped.set(pixels.subarray(y * w * 4, (y + 1) * w * 4), (h - 1 - y) * w * 4)
+    }
+
+    // Re-paint creature-eye cells with the full eye shader (the bake only has a
+    // simplified disc), so the exported atlas carries pupil/iris/sclera detail.
+    if (kind === 'color') {
+      try {
+        compositeEyes(flipped, w, h, target.texture)
+      } catch (e) {
+        console.warn('[Herosaver] eye compositing failed:', e)
+      }
     }
 
     const canvas = document.createElement('canvas')

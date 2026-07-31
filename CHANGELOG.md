@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.5.0]
+
+### Fixed
+- Creature eyes exported as flat coloured discs ("two oranges") because the
+  color-atlas bake renders eyes through HeroForge's simplified `surfaceBake`
+  path (solid `sclera2` + solid `iris1` disc, no pupil/gradient/limbus). The
+  full eye shader (read from `shaderkit.js`) is now replicated in JS during
+  `saveTextures`: each eye cell is re-painted per-pixel, blending the
+  `scleraTexture` / `irisAndDistanceTexture` red-channel gradients against the
+  material's `sclera0-2` / `iris0-2` basis colours, carving the pupil from the
+  iris alpha, and shading the limbal ring from the distance map. The exported
+  atlas therefore carries a real eye, and the OBJ's existing `uvPosScl` UV
+  remap samples it without any geometry changes.
+
 ## [1.4.0]
 
 ### Fixed
