@@ -232,24 +232,16 @@ const cubeMeshUuids = () => {
 // cube/display case by UUID before export, using the same name/boundary
 // detection as the OBJ export.
 const exportSTLBuffer = (subdivisions, filterCubes = false) => {
-  let roots = getExportRoots()
+  const group = process(getExportRoots(), subdivisions, !!character.data.mirroredPose)
   if (filterCubes) {
     const cubeUuids = cubeMeshUuids()
-    // Wrap roots to filter out cube meshes during traversal
-    const filteredRoots = roots.map(root => {
-      const clone = root.clone()
-      const originalTraverse = clone.traverse.bind(clone)
-      clone.traverse = (callback) => {
-        originalTraverse(obj => {
-          if (obj.isMesh && cubeUuids.has(obj.uuid)) return
-          callback(obj)
-        })
+    // Remove cube meshes from the group before export (same logic as OBJ)
+    group.traverse(obj => {
+      if (obj.isMesh && cubeUuids.has(obj.uuid)) {
+        obj.removeFromParent()
       }
-      return clone
     })
-    roots = filteredRoots
   }
-  const group = process(roots, subdivisions, !!character.data.mirroredPose)
   const view = new STLExporter().parse(group, { binary: true })
   return view.buffer
     ? view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength)
