@@ -143,12 +143,23 @@ const cubeMeshUuids = () => {
     b.minY <= union.minY + eps || b.maxY >= union.maxY - eps ||
     b.minZ <= union.minZ + eps || b.maxZ >= union.maxZ - eps
 
-  // Detector 1: Containment (any mesh whose AABB encloses the full union)
+  // Detector 1: Containment (any mesh whose AABB encloses the union of ALL OTHER meshes)
   for (const b of boxes) {
+    // Compute union of all OTHER boxes
+    const otherBoxes = boxes.filter(bx => bx.uuid !== b.uuid)
+    if (otherBoxes.length === 0) continue
+    const otherUnion = {
+      minX: Math.min(...otherBoxes.map(bx => bx.minX)),
+      minY: Math.min(...otherBoxes.map(bx => bx.minY)),
+      minZ: Math.min(...otherBoxes.map(bx => bx.minZ)),
+      maxX: Math.max(...otherBoxes.map(bx => bx.maxX)),
+      maxY: Math.max(...otherBoxes.map(bx => bx.maxY)),
+      maxZ: Math.max(...otherBoxes.map(bx => bx.maxZ))
+    }
     const encloses =
-      b.minX <= union.minX + eps && b.maxX >= union.maxX - eps &&
-      b.minY <= union.minY + eps && b.maxY >= union.maxY - eps &&
-      b.minZ <= union.minZ + eps && b.maxZ >= union.maxZ - eps
+      b.minX <= otherUnion.minX + eps && b.maxX >= otherUnion.maxX - eps &&
+      b.minY <= otherUnion.minY + eps && b.maxY >= otherUnion.maxY - eps &&
+      b.minZ <= otherUnion.minZ + eps && b.maxZ >= otherUnion.maxZ - eps
     if (encloses) removed.add(b.uuid)
   }
 
