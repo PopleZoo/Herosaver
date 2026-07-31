@@ -37,6 +37,9 @@ All notable changes to this project are documented in this file.
 - `saveObj` no longer aborts when one mesh has an unexpected geometry/material:
   the offending mesh is logged and skipped, and any other failure is printed
   to the console instead of silently producing no OBJ.
+- OBJ export now strips the HeroForge wrapping cube ("display case") like the
+  STL export does, by detecting the oversized enclosing shell mesh via the
+  same volume-gap heuristic (`cubeMeshUuids`).
 - STL export (`process`) accepts multiple roots and deduplicates meshes, so
   overlapping roots are never exported twice.
 

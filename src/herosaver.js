@@ -64,6 +64,58 @@ const getExportRoots = () => {
   return [...roots.values()]
 }
 
+// World-space bounding-box volume of a mesh, using the same baked vertices the
+// export uses (skinning + world transform, before the STL/OBJ rotation).
+const worldVolume = obj => {
+  const pos = obj.geometry.getAttribute('position')
+  const isSkinned = obj.isSkinnedMesh || (obj.skeleton && obj.skeleton.bones && obj.skeleton.bones.length > 0)
+  let minX = Infinity; let minY = Infinity; let minZ = Infinity
+  let maxX = -Infinity; let maxY = -Infinity; let maxZ = -Infinity
+  for (let i = 0; i < pos.count; i++) {
+    const v = isSkinned
+      ? bakeSkinnedVertex(obj, i).applyMatrix4(obj.matrixWorld)
+      : new Vector3(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(obj.matrixWorld)
+    if (v.x < minX) minX = v.x; if (v.x > maxX) maxX = v.x
+    if (v.y < minY) minY = v.y; if (v.y > maxY) maxY = v.y
+    if (v.z < minZ) minZ = v.z; if (v.z > maxZ) maxZ = v.z
+  }
+  return (maxX - minX) * (maxY - minY) * (maxZ - minZ)
+}
+
+// Identifies the HeroForge wrapping cube ("display case") - the giant box shell
+// that encloses the figure - so OBJ export can skip it. Uses the same volume-gap
+// heuristic cube-remover.js applies to STL: one mesh dwarfs every real body part
+// by many orders of magnitude, so the largest multiplicative jump in volume
+// marks it (threshold 1000x). Returns a Set of mesh uuids to skip.
+const cubeMeshUuids = () => {
+  const entries = []
+  const seen = new Set()
+  getExportRoots().forEach(root => {
+    root.updateMatrixWorld(true)
+    root.traverse(obj => {
+      if (!obj.isMesh || seen.has(obj.uuid)) return
+      seen.add(obj.uuid)
+      const vol = worldVolume(obj)
+      if (vol > 0) entries.push({ uuid: obj.uuid, vol })
+    })
+  })
+
+  entries.sort((a, b) => a.vol - b.vol)
+  let splitPos = -1
+  let maxRatio = 1
+  for (let k = 0; k < entries.length - 1; k++) {
+    const ratio = entries[k + 1].vol / entries[k].vol
+    if (ratio > maxRatio) { maxRatio = ratio; splitPos = k }
+  }
+
+  const removed = new Set()
+  if (splitPos >= 0 && maxRatio > 1000) {
+    for (let k = splitPos + 1; k < entries.length; k++) removed.add(entries[k].uuid)
+    console.log(`[Herosaver] OBJ: dropped ${removed.size} oversized shell(s) (volume gap ${maxRatio.toExponential(1)}x)`)
+  }
+  return removed
+}
+
 // Export the character to a binary STL ArrayBuffer (the common starting point
 // for the STL/OBJ exports and the cube removal that both share).
 const exportSTLBuffer = subdivisions => {
@@ -260,6 +312,10 @@ const saveObjInner = () => {
 
   getExportRoots().forEach(root => root.updateMatrixWorld(true))
 
+  // The wrapping cube / "display case" is removed from the OBJ just like the
+  // STL export does, so the geometry you get is only the actual model.
+  const cubeMeshes = cubeMeshUuids()
+
   const seenMeshes = new Set()
   let vertexOffset = 1
   let uvOffset = 1
@@ -268,6 +324,7 @@ const saveObjInner = () => {
     root.traverse(obj => {
       if (!obj.isMesh) return
       if (seenMeshes.has(obj.uuid)) return
+      if (cubeMeshes.has(obj.uuid)) return
       seenMeshes.add(obj.uuid)
 
       // One broken mesh (unexpected geometry/material) must not abort the whole
