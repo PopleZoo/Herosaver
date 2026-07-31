@@ -1155,6 +1155,85 @@ window.heroEyeShader = () => {
   }
 }
 
+// Debug: download the eye material's dedicated source textures (scleraTexture,
+// irisAndDistanceTexture) as PNGs and report per-channel stats plus the basis
+// colours, so we can see what detail the eye shader is working from. The shader
+// only uses each texture's RED channel to pick between the sclera0-2 / iris0-2
+// basis colours - if those colours are near-identical (all one orange), the
+// exported iris is inherently flat and the in-game richness comes from the
+// normal map / specular under lighting, which an unlit atlas bake cannot carry.
+window.heroEyeTextures = () => {
+  const rows = []
+  const seen = new Set()
+
+  const stats = tex => {
+    if (!tex) return null
+    const n = tex.w * tex.h
+    const c = [0, 1, 2, 3].map(k => {
+      let min = 255; let max = 0; let sum = 0
+      for (let i = k; i < tex.data.length; i += 4) {
+        const v = tex.data[i]
+        if (v < min) min = v
+        if (v > max) max = v
+        sum += v
+      }
+      return `${min}-${(sum / n).toFixed(0)}-${max}`
+    })
+    return { R: c[0], G: c[1], B: c[2], A: c[3] }
+  }
+
+  const download = (tex, name) => {
+    if (!tex) return
+    const c = document.createElement('canvas')
+    c.width = tex.w; c.height = tex.h
+    const ctx = c.getContext('2d')
+    const img = ctx.createImageData(tex.w, tex.h)
+    img.data.set(tex.data)
+    ctx.putImageData(img, 0, 0)
+    c.toBlob(blob => {
+      if (blob) saveAs(blob, name)
+    }, 'image/png')
+  }
+
+  getExportRoots().forEach(root => {
+    root.traverse(obj => {
+      if (!obj.isMesh || seen.has(obj.uuid)) return
+      seen.add(obj.uuid)
+      const m = Array.isArray(obj.material) ? obj.material[0] : obj.material
+      if (!m || !m.uniforms) return
+      const irisTex = m.uniforms.irisAndDistanceTexture && m.uniforms.irisAndDistanceTexture.value
+      if (!irisTex || !irisTex.isTexture) return
+      const name = (obj.name || obj.type).replace(/[^a-zA-Z0-9_]/g, '_')
+      const sclera = eyePixels(m.uniforms.scleraTexture && m.uniforms.scleraTexture.value)
+      const iris = eyePixels(irisTex)
+      const uvps = m.uniforms.uvPosScl && m.uniforms.uvPosScl.value
+      download(sclera, `${name}_sclera.png`)
+      download(iris, `${name}_irisDistance.png`)
+      rows.push({
+        name: obj.name || obj.type,
+        sclera: stats(sclera),
+        irisDistance: stats(iris),
+        sclera0: toHex(eyeColor3(m.uniforms.sclera0 && m.uniforms.sclera0.value)),
+        sclera1: toHex(eyeColor3(m.uniforms.sclera1 && m.uniforms.sclera1.value)),
+        sclera2: toHex(eyeColor3(m.uniforms.sclera2 && m.uniforms.sclera2.value)),
+        iris0: toHex(eyeColor3(m.uniforms.iris0 && m.uniforms.iris0.value)),
+        iris1: toHex(eyeColor3(m.uniforms.iris1 && m.uniforms.iris1.value)),
+        iris2: toHex(eyeColor3(m.uniforms.iris2 && m.uniforms.iris2.value)),
+        pupil: toHex(eyeColor3(m.uniforms.pupil && m.uniforms.pupil.value)),
+        limbus: +(m.uniforms.limbus && m.uniforms.limbus.value),
+        irisSize: +(m.uniforms.irisSize && m.uniforms.irisSize.value),
+        uvPosScl: uvps ? [uvps.x, uvps.y, uvps.z, uvps.w].map(n => +n.toFixed(4)).join(',') : 'none'
+      })
+    })
+  })
+
+  console.log('[Herosaver] eye source textures:')
+  try {
+    console.table(rows)
+  } catch (e) { console.log(rows) }
+  return rows
+}
+
 // lives (main figure, mount/familiar/companion). Lists only nodes that are a
 // mesh or carry a colorBake/_partLightGroup, with their full ancestor path.
 // Run heroScene() in DevTools to locate the other model(s) in a composition.
