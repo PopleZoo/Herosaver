@@ -273,6 +273,7 @@ window.saveObj = () => {
 
 const saveObjInner = () => {
   const atlases = window.saveTextures()
+  console.log(`[Herosaver] saveObj: saved ${atlases.size} atlas texture(s)`)
 
   const vertices = []
   const uvs = []
@@ -425,7 +426,13 @@ ${uvs.join('\n')}
 ${faces.join('\n')}
 `
 
-  saveAs(new Blob([obj]), `${getName()}.obj`)
+  console.log(`[Herosaver] saveObj: built ${vertices.length} vertices / ${uvs.length} UVs / ${faces.length} faces (${(obj.length / 1024 / 1024).toFixed(1)} MB)`)
+  try {
+    saveAs(new Blob([obj]), `${getName()}.obj`)
+    console.log('[Herosaver] saveObj: .obj download triggered')
+  } catch (e) {
+    console.error('[Herosaver] failed to save OBJ:', e)
+  }
 
   const mtl = []
   for (const name of mtlOrder) {
@@ -441,7 +448,12 @@ ${faces.join('\n')}
     if (file) mtl.push(`map_Kd ${file}`)
   }
 
-  saveAs(new Blob([mtl.join('\n')], { type: 'text/plain' }), `${getName()}.mtl`)
+  try {
+    saveAs(new Blob([mtl.join('\n')], { type: 'text/plain' }), `${getName()}.mtl`)
+    console.log('[Herosaver] saveObj: .mtl download triggered')
+  } catch (e) {
+    console.error('[Herosaver] failed to save MTL:', e)
+  }
 }
 
 // Every distinct bake in the scene is exported, so a composition with multiple
