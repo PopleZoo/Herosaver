@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.5.2]
+
+### Added
+- Baked a soft elliptical cornea-gloss glint over the upper-iris area of the
+  composited eyes. The unlit color bake has no specular, which is a big part
+  of why the in-game eye reads as wet; the glint is kept subtle so it doesn't
+  clash with the flat low-poly body.
+
 ## [1.5.1]
 
 ### Added

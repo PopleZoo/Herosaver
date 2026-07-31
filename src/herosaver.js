@@ -8,7 +8,7 @@ import { removeCubeFromSTL } from './cube-remover'
 
 // Bump with each release so stale CDN/browser copies are easy to spot from the
 // console: window.herosaverVersion.
-window.herosaverVersion = '1.5.1'
+window.herosaverVersion = '1.5.2'
 
 // ─── scene discovery ────────────────────────────────────────────────────────
 // HeroForge keeps the whole composition (figure + mounts + companions) inside
@@ -650,7 +650,18 @@ const eyeShade = (eye, u, v) => {
     b = mix(b, ib, irisA)
   }
 
-  return [clamp(r, 0, 1), clamp(g, 0, 1), clamp(b, 0, 1)]
+  // Baked cornea gloss: the unlit color bake has no specular, which is a big
+  // part of why the in-game eye reads as wet/detailed. Lay a soft white glint
+  // over the upper-iris area; kept subtle and elliptical so it doesn't fight
+  // the flat low-poly body around the eye.
+  const gu = (u - 0.4) / 0.15
+  const gv = (v - 0.34) / 0.1
+  const glint = 0.4 * Math.exp(-(gu * gu + gv * gv) / 2)
+  r = clamp(r + glint, 0, 1)
+  g = clamp(g + glint, 0, 1)
+  b = clamp(b + glint, 0, 1)
+
+  return [r, g, b]
 }
 
 // Paint a faithful eye over every eye cell in the just-flipped atlas pixels.
