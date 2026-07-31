@@ -87,7 +87,10 @@ const worldAABB = obj => {
 }
 
 // Names HeroForge uses for the display case / dome and other enclosing shells.
-const CASE_NAME = /sky|dome|case|display|cage|cube|glass|shell|env/i
+// Strong names identify the case outright; boundary names are only trusted when
+// the mesh also sits flush against the exported model's outer bounds.
+const CASE_NAME_STRONG = /vault|productVis|loRez|dome|cage|skydome/i
+const CASE_NAME_BOUNDARY = /sky|case|display|cube|glass|shell|env/i
 
 // Identifies the HeroForge wrapping cube / display case ("dome") so OBJ export
 // can skip it. Three independent detectors, any of which can flag a shell:
@@ -146,10 +149,12 @@ const cubeMeshUuids = () => {
 
   if (removed.size === 0) {
     for (const b of boxes) {
-      if (CASE_NAME.test(b.name) && flush(b)) removed.add(b.uuid)
+      if (CASE_NAME_STRONG.test(b.name) || (CASE_NAME_BOUNDARY.test(b.name) && flush(b))) {
+        removed.add(b.uuid)
+      }
     }
     if (removed.size > 0) {
-      console.log(`[Herosaver] OBJ: dropped ${removed.size} case-like shell(s) (name + boundary)`)
+      console.log(`[Herosaver] OBJ: dropped ${removed.size} case-like shell(s) (name/boundary)`)
       return removed
     }
   } else {
@@ -402,6 +407,7 @@ const saveObjInner = () => {
   getExportRoots().forEach(root => {
     root.traverse(obj => {
       if (!obj.isMesh) return
+      if (!obj.visible) return
       if (seenMeshes.has(obj.uuid)) return
       if (cubeMeshes.has(obj.uuid)) return
       seenMeshes.add(obj.uuid)
@@ -687,7 +693,7 @@ window.heroMeshes = () => {
         material: m ? (m.type || m.constructor.name) : null,
         skinned: !!(obj.isSkinnedMesh || (obj.skeleton && obj.skeleton.bones && obj.skeleton.bones.length)),
         size: b ? `${(b.maxX - b.minX).toFixed(2)}x${(b.maxY - b.minY).toFixed(2)}x${(b.maxZ - b.minZ).toFixed(2)}` : '(no geometry)',
-        caseName: CASE_NAME.test(obj.name || obj.type) ? 'Y' : ''
+        caseName: (CASE_NAME_STRONG.test(obj.name || obj.type) || CASE_NAME_BOUNDARY.test(obj.name || obj.type)) ? 'Y' : ''
       })
     })
   })
