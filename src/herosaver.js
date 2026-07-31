@@ -4,7 +4,7 @@ import { Matrix4, Vector3 } from 'three'
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
 import { saveAs } from 'file-saver'
 import { character, getName, process, bakeSkinnedVertex } from './utils'
-import { removeCubeFromSTL } from './cube-remover'
+import { removeCubeFromSTL, parseSTL, findConnectedComponents, analyzeShell } from './cube-remover'
 
 // Sanitize strings for use in filenames and material names (replace spaces, special chars)
 const sanitize = s => s.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
@@ -1351,4 +1351,48 @@ window.heroScene = () => {
   } catch (e) { /* console.table unavailable */ }
 
   return rows
+}
+
+// ─── Cube detection diagnostic ───────────────────────────────────────────────
+// Run heroCubeDiag(subdivisions) in DevTools to inspect STL shell volumes and
+// cube detection. Useful for tuning gapRatio when the display case isn't removed.
+// Argument: subdivisions (default 2, matches the STL export default).
+window.heroCubeDiag = (subdivisions = 2) => {
+  try {
+    const buffer = exportSTLBuffer(subdivisions)
+    const triangles = parseSTL(buffer)
+    if (triangles.length === 0) {
+      console.log('[Herosaver] no triangles in STL')
+      return
+    }
+    const shells = findConnectedComponents(triangles)
+    const info = shells.map(s => analyzeShell(s, triangles))
+    console.log(`[Herosaver cube diag] ${shells.length} shell(s), ${triangles.length} faces`)
+    console.table(info.map((i, idx) => ({
+      shell: idx,
+      faces: i.count,
+      volume: +i.volume.toPrecision(3),
+      cubeScore: +i.cubeScore.toFixed(3),
+      axisScore: +i.axisScore.toFixed(3),
+      aspectScore: +i.aspectScore.toFixed(3),
+      size: i.size.map(s => +s.toFixed(1)).join(' x '),
+      bounds: i.bounds.map(v => +v.toFixed(1)).join(', ')
+    })))
+    // Volume gap analysis
+    const asc = info
+      .map((info, i) => ({ i, volume: info.volume }))
+      .filter(s => s.volume > 0)
+      .sort((a, b) => a.volume - b.volume)
+    let maxRatio = 1; let splitPos = -1
+    for (let k = 0; k < asc.length - 1; k++) {
+      const ratio = asc[k + 1].volume / asc[k].volume
+      if (ratio > 1) { maxRatio = ratio; splitPos = k }
+    }
+    console.log(`[Herosaver cube diag] max volume gap: ${maxRatio.toExponential(1)}x (threshold 1000x)`)
+    if (splitPos >= 0) {
+      console.log('[Herosaver cube diag] Shells above gap (would be removed):', asc.slice(splitPos + 1).map(s => s.i))
+    }
+  } catch (e) {
+    console.error('[Herosaver cube diag] error:', e)
+  }
 }

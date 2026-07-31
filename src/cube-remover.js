@@ -50,7 +50,7 @@ function parseBinarySTL (dv, triCount) {
   return triangles
 }
 
-function parseASCIISTL (text) {
+export function parseASCIISTL (text) {
   const triangles = []
   const facetRe = /facet normal\s+([\d.eE+-]+)\s+([\d.eE+-]+)\s+([\d.eE+-]+)([\s\S]*?)endfacet/g
   const vertRe = /vertex\s+([\d.eE+-]+)\s+([\d.eE+-]+)\s+([\d.eE+-]+)/g
@@ -71,11 +71,11 @@ function parseASCIISTL (text) {
 
 // ─── Connected Components ───────────────────────────────────────────────────
 
-function quantize (v, f = 10000) {
+export function quantize (v, f = 10000) {
   return `${Math.round(v[0] * f)},${Math.round(v[1] * f)},${Math.round(v[2] * f)}`
 }
 
-function findConnectedComponents (triangles) {
+export function findConnectedComponents (triangles) {
   const n = triangles.length
   const visited = new Uint8Array(n)
 
@@ -112,7 +112,7 @@ function findConnectedComponents (triangles) {
 
 // ─── Shell Analysis ─────────────────────────────────────────────────────────
 
-function analyzeShell (indices, triangles) {
+export function analyzeShell (indices, triangles) {
   let minX = Infinity; let minY = Infinity; let minZ = Infinity
   let maxX = -Infinity; let maxY = -Infinity; let maxZ = -Infinity
   let axisAligned = 0
@@ -149,7 +149,7 @@ function analyzeShell (indices, triangles) {
 
 // ─── STL Writer ─────────────────────────────────────────────────────────────
 
-function writeBinarySTL (tris) {
+export function writeBinarySTL (tris) {
   const n = tris.length
   const buf = new ArrayBuffer(84 + n * 50)
   const dv = new DataView(buf)
