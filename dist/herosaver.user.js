@@ -1,21 +1,21 @@
 // ==UserScript==
 // @name         Herosaver
-// @namespace    https://github.com/D1amondweaver/Herosaver
+// @namespace    https://github.com/PopleZoo/Herosaver
 // @version      1.4.0
 // @description  Save Configuration and STLs from websites using the THREE.JS framework
 // @author       reformagus&D1amondweaver
-// @homepageURL  https://github.com/D1amondweaver/Herosaver
+// @homepageURL  https://github.com/PopleZoo/Herosaver
 // @match        *://*.heroforge.com/*
 // @grant        GM_registerMenuCommand
 // @run-at       document-idle
-// @downloadURL  https://raw.githubusercontent.com/D1amondweaver/Herosaver/UVCoords/dist/herosaver.js
-// @updateURL    https://raw.githubusercontent.com/D1amondweaver/Herosaver/UVCoords/dist/herosaver.js
+// @downloadURL  https://raw.githubusercontent.com/PopleZoo/Herosaver/UVCoords/dist/herosaver.js
+// @updateURL    https://raw.githubusercontent.com/PopleZoo/Herosaver/UVCoords/dist/herosaver.js
 // ==/UserScript==
 
 (function () {
   'use strict'
 
-  const SRC = 'https://raw.githubusercontent.com/D1amondweaver/Herosaver/UVCoords/dist/herosaver.js'
+  const SRC = 'https://raw.githubusercontent.com/PopleZoo/Herosaver/UVCoords/dist/herosaver.js'
 
   // Inject into the page context so the loaded code can reach window.CK, THREE, etc.
   // A cache-busting query is appended so the freshest published bundle always
