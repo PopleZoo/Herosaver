@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.5.1]
+
+### Added
+- The eye composite now overlays the `irisAndDistanceTexture` top-half
+  grayscale pattern as iris-fiber detail (normalised to its mean so overall
+  iris brightness is preserved). The eye shader discards this channel, which
+  is why the earlier composite looked flat; `heroEyeTextures()` was added to
+  download the eye's source textures for inspection.
+
 ## [1.5.0]
 
 ### Fixed

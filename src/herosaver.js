@@ -8,7 +8,7 @@ import { removeCubeFromSTL } from './cube-remover'
 
 // Bump with each release so stale CDN/browser copies are easy to spot from the
 // console: window.herosaverVersion.
-window.herosaverVersion = '1.5.0'
+window.herosaverVersion = '1.5.1'
 
 // ─── scene discovery ────────────────────────────────────────────────────────
 // HeroForge keeps the whole composition (figure + mounts + companions) inside
@@ -554,6 +554,24 @@ const buildEyeSampler = material => {
   const sclera = eyePixels(u.scleraTexture && u.scleraTexture.value)
   const iris = eyePixels(u.irisAndDistanceTexture && u.irisAndDistanceTexture.value)
   if (!sclera || !iris) return null
+
+  // Mean red-channel value over the iris region (top half, where the alpha mask
+  // is opaque). The iris texture's grayscale pattern is the actual fiber detail
+  // the bake flattens away; normalising each sample against this mean lets us
+  // overlay that detail without shifting the overall iris brightness.
+  let irisSum = 0
+  let irisN = 0
+  const ih = Math.floor(iris.h / 2)
+  for (let y = 0; y < ih; y++) {
+    for (let x = 0; x < iris.w; x++) {
+      const i = (y * iris.w + x) * 4
+      if (iris.data[i + 3] > 128) {
+        irisSum += iris.data[i]
+        irisN++
+      }
+    }
+  }
+
   return {
     sclera0: eyeColor3(u.sclera0 && u.sclera0.value),
     sclera1: eyeColor3(u.sclera1 && u.sclera1.value),
@@ -565,6 +583,7 @@ const buildEyeSampler = material => {
     limbus: +(u.limbus && u.limbus.value) || 0,
     irisSize: +(u.irisSize && u.irisSize.value) || 0.5,
     irisRotate: +(u.irisRotate && u.irisRotate.value) || 0,
+    irisMean: irisN ? irisSum / irisN / 255 : 0.5,
     sclera: sclera,
     iris: iris
   }
@@ -617,6 +636,15 @@ const eyeShade = (eye, u, v) => {
     let ib = eye.iris0.b * iw0 + eye.iris1.b * iw1 + eye.iris2.b * iw2
     const ish = 1 - limbusShadow
     ir *= ish; ig *= ish; ib *= ish
+    // Overlay the iris texture's grayscale pattern as fiber detail, normalised
+    // to its mean so brightness is preserved. The shader discards this channel
+    // (it only uses the red gradient to pick basis colours), which is exactly
+    // why the baked eye reads as a flat disc.
+    const dl = ramp.r / (eye.irisMean || 0.5)
+    const dw = 0.6
+    ir = clamp(ir * (1 - dw + dw * dl), 0, 1)
+    ig = clamp(ig * (1 - dw + dw * dl), 0, 1)
+    ib = clamp(ib * (1 - dw + dw * dl), 0, 1)
     r = mix(r, ir, irisA)
     g = mix(g, ig, irisA)
     b = mix(b, ib, irisA)
