@@ -64,11 +64,14 @@ const getExportRoots = () => {
   return [...roots.values()]
 }
 
-// World-space bounding-box volume of a mesh, using the same baked vertices the
-// export uses (skinning + world transform, before the STL/OBJ rotation).
-const worldVolume = obj => {
-  const pos = obj.geometry && obj.geometry.getAttribute ? obj.geometry.getAttribute('position') : null
-  if (!pos) return 0
+// World-space axis-aligned bounding box of a mesh, using the same baked
+// vertices the export uses (skinning + world transform). Returns null when the
+// mesh has no readable geometry.
+const worldAABB = obj => {
+  const geo = obj.geometry
+  if (!geo || typeof geo.getAttribute !== 'function') return null
+  const pos = geo.getAttribute('position')
+  if (!pos) return null
   const isSkinned = obj.isSkinnedMesh || (obj.skeleton && obj.skeleton.bones && obj.skeleton.bones.length > 0)
   let minX = Infinity; let minY = Infinity; let minZ = Infinity
   let maxX = -Infinity; let maxY = -Infinity; let maxZ = -Infinity
@@ -80,42 +83,79 @@ const worldVolume = obj => {
     if (v.y < minY) minY = v.y; if (v.y > maxY) maxY = v.y
     if (v.z < minZ) minZ = v.z; if (v.z > maxZ) maxZ = v.z
   }
-  return (maxX - minX) * (maxY - minY) * (maxZ - minZ)
+  return { minX, minY, minZ, maxX, maxY, maxZ }
 }
 
-// Identifies the HeroForge wrapping cube ("display case") - the giant box shell
-// that encloses the figure - so OBJ export can skip it. Uses the same volume-gap
-// heuristic cube-remover.js applies to STL: one mesh dwarfs every real body part
-// by many orders of magnitude, so the largest multiplicative jump in volume
-// marks it (threshold 1000x). Returns a Set of mesh uuids to skip.
+// Identifies the HeroForge wrapping cube / display case ("dome") so OBJ export
+// can skip it. Detection is containment-based: the case is the shell whose
+// world AABB encloses the union of every other exported mesh, so it works no
+// matter how the case is modelled (single mesh, panels, tight or huge) and no
+// matter how many real parts exist. Falls back to the volume-gap heuristic when
+// nothing encloses the union (e.g. the model pokes out of the case). Returns a
+// Set of mesh uuids to skip.
 const cubeMeshUuids = () => {
-  const entries = []
+  const boxes = []
   const seen = new Set()
   getExportRoots().forEach(root => {
     root.updateMatrixWorld(true)
     root.traverse(obj => {
       if (!obj.isMesh || seen.has(obj.uuid)) return
       seen.add(obj.uuid)
-      let vol = 0
       try {
-        vol = worldVolume(obj)
-      } catch (e) { /* unreadable mesh - ignore for cube detection */ }
-      if (vol > 0) entries.push({ uuid: obj.uuid, vol })
+        const b = worldAABB(obj)
+        if (b) boxes.push({ uuid: obj.uuid, ...b })
+      } catch (e) { /* unreadable mesh - ignore for case detection */ }
     })
   })
+  if (boxes.length === 0) return new Set()
 
-  entries.sort((a, b) => a.vol - b.vol)
+  const union = {
+    minX: Math.min(...boxes.map(b => b.minX)),
+    minY: Math.min(...boxes.map(b => b.minY)),
+    minZ: Math.min(...boxes.map(b => b.minZ)),
+    maxX: Math.max(...boxes.map(b => b.maxX)),
+    maxY: Math.max(...boxes.map(b => b.maxY)),
+    maxZ: Math.max(...boxes.map(b => b.maxZ))
+  }
+  const diag = Math.sqrt(
+    (union.maxX - union.minX) ** 2 +
+    (union.maxY - union.minY) ** 2 +
+    (union.maxZ - union.minZ) ** 2
+  )
+  const eps = 1e-6 * Math.max(diag, 1e-9)
+
+  const removed = new Set()
+  for (const b of boxes) {
+    const encloses =
+      b.minX <= union.minX + eps && b.maxX >= union.maxX - eps &&
+      b.minY <= union.minY + eps && b.maxY >= union.maxY - eps &&
+      b.minZ <= union.minZ + eps && b.maxZ >= union.maxZ - eps
+    if (encloses) removed.add(b.uuid)
+  }
+
+  if (removed.size > 0) {
+    console.log(`[Herosaver] OBJ: dropped ${removed.size} enclosing shell(s) (display case)`)
+    return removed
+  }
+
+  // Fallback: one mesh dwarfs every real body part by many orders of magnitude.
+  const asc = boxes
+    .map(b => ({ uuid: b.uuid, vol: (b.maxX - b.minX) * (b.maxY - b.minY) * (b.maxZ - b.minZ) }))
+    .filter(b => b.vol > 0)
+    .sort((a, b) => a.vol - b.vol)
+
   let splitPos = -1
   let maxRatio = 1
-  for (let k = 0; k < entries.length - 1; k++) {
-    const ratio = entries[k + 1].vol / entries[k].vol
+  for (let k = 0; k < asc.length - 1; k++) {
+    const ratio = asc[k + 1].vol / asc[k].vol
     if (ratio > maxRatio) { maxRatio = ratio; splitPos = k }
   }
 
-  const removed = new Set()
   if (splitPos >= 0 && maxRatio > 1000) {
-    for (let k = splitPos + 1; k < entries.length; k++) removed.add(entries[k].uuid)
+    for (let k = splitPos + 1; k < asc.length; k++) removed.add(asc[k].uuid)
     console.log(`[Herosaver] OBJ: dropped ${removed.size} oversized shell(s) (volume gap ${maxRatio.toExponential(1)}x)`)
+  } else {
+    console.warn(`[Herosaver] OBJ: no enclosing shell found (union ${(union.maxX - union.minX).toFixed(2)}x${(union.maxY - union.minY).toFixed(2)}x${(union.maxZ - union.minZ).toFixed(2)}, largest gap ${maxRatio.toExponential(1)}x)`)
   }
   return removed
 }
