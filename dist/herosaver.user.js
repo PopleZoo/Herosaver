@@ -27,9 +27,9 @@
   }
 
   // ─── Tampermonkey menu commands ───────────────────────────────────────────
-  // "Save STL" exports the model with the surrounding cube/shell automatically
+  // "Save Clean STL" exports the model with the surrounding cube/shell automatically
   // removed (cube removal runs locally in the bundle, no external page needed).
-  GM_registerMenuCommand('Herosaver: Save STL', () => run('saveCleanStl'))
+  GM_registerMenuCommand('Herosaver: Save Clean STL', () => run('saveCleanStl'))
   GM_registerMenuCommand('Herosaver: Save OBJ and Textures', () => run('saveObj'))
   GM_registerMenuCommand('Herosaver: Save JSON', () => run('saveJson'))
 
@@ -79,8 +79,8 @@
       return b
     }
 
-    // "Save STL" runs the cube-removing export (saveCleanStl).
-    panel.appendChild(makeBtn('Save STL', 'saveCleanStl', true))
+    // "Save Clean STL" runs the cube-removing export (saveCleanStl).
+    panel.appendChild(makeBtn('Save Clean STL', 'saveCleanStl', true))
     panel.appendChild(makeBtn('Save OBJ and Textures', 'saveObj', false))
     panel.appendChild(makeBtn('Save JSON', 'saveJson', false))
 
