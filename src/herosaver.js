@@ -834,6 +834,7 @@ window.heroBakes = () => {
     root.traverse(obj => {
       if (!obj.isMesh || seen.has(obj.uuid)) return
       seen.add(obj.uuid)
+      if (!obj.geometry || typeof obj.geometry.getAttribute !== 'function') return // skip non-THREE.js geometries
       const m = Array.isArray(obj.material) ? obj.material[0] : obj.material
       const uvps = m && m.uniforms && m.uniforms.uvPosScl ? m.uniforms.uvPosScl.value : null
       const atlas = m && m.uniforms && m.uniforms.colorAtlasMap ? m.uniforms.colorAtlasMap.value : null
@@ -871,6 +872,7 @@ window.heroMeshes = () => {
     root.traverse(obj => {
       if (!obj.isMesh || seen.has(obj.uuid)) return
       seen.add(obj.uuid)
+      if (!obj.geometry || typeof obj.geometry.getAttribute !== 'function') return // skip non-THREE.js geometries
       const b = worldAABB(obj)
       const m = Array.isArray(obj.material) ? obj.material[0] : obj.material
       rows.push({
