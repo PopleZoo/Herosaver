@@ -94,6 +94,27 @@
     })
     panel.appendChild(row([select]))
 
+    // "Just T-pose" checkbox — only relevant for rigged formats (glTF/FBX).
+    // When checked: resets bone transforms to T-pose, removes the base, and
+    // exports each model (character/mount/companion) as a separate file.
+    const tposeRow = row([])
+    tposeRow.style.display = 'none'
+    const tposeLabel = document.createElement('label')
+    tposeLabel.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;color:#e5e7eb;font-size:12px'
+    const tposeCheckbox = document.createElement('input')
+    tposeCheckbox.type = 'checkbox'
+    tposeCheckbox.style.cssText = 'width:14px;height:14px;accent-color:#2563eb'
+    tposeLabel.appendChild(tposeCheckbox)
+    tposeLabel.appendChild(document.createTextNode('Just T-pose'))
+    tposeRow.appendChild(tposeLabel)
+    panel.appendChild(tposeRow)
+
+    // Show/hide T-pose checkbox based on selected format
+    select.addEventListener('change', () => {
+      const isRigged = select.value === 'gltf' || select.value === 'fbx'
+      tposeRow.style.display = isRigged ? 'flex' : 'none'
+    })
+
     const makeBtn = (label, fn, primary) => {
       const b = document.createElement('button')
       b.textContent = label
@@ -109,8 +130,9 @@
 const saveBtn = makeBtn('Save', '', true)
     saveBtn.addEventListener('click', () => {
       const format = select.value
-      if (format === 'gltf') run('saveGltf')
-      else if (format === 'fbx') run('saveFbx')
+      const tpose = tposeCheckbox.checked
+      if (format === 'gltf') run(`saveGltf(${tpose})`)
+      else if (format === 'fbx') run(`saveFbx(${tpose})`)
       else if (format === 'stl') run('saveCleanStl')
       else run('saveObj')
     })

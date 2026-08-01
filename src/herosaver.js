@@ -18,7 +18,7 @@ const sanitize = s => s.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_').repl
 
 // Bump with each release so stale CDN/browser copies are easy to spot from the
 // console: window.herosaverVersion.
-window.herosaverVersion = '1.5.10'
+window.herosaverVersion = '1.5.9'
 
 // ─── scene discovery ────────────────────────────────────────────────────────
 // HeroForge keeps the whole composition (figure + mounts + companions) inside
@@ -298,6 +298,7 @@ const dataUriToBytes = dataUri => {
 window.saveGltf = async (options = {}) => {
   const subdivisions = options.subdivisions || 2
   const mirroredPose = options.mirroredPose || !!character.data.mirroredPose
+  const tpose = options.tpose || false
   // 'zip' = one .zip with scene.gltf + scene.bin + textures/*.png (default),
   // 'single' = one self-contained .gltf with embedded buffer + textures.
   const format = options.format || 'zip'
@@ -314,10 +315,17 @@ window.saveGltf = async (options = {}) => {
       console.warn('[Herosaver] cube detection failed, exporting with the wrapping cube:', e)
     }
 
+const roots = getExportRoots()
+
+    // When tpose is enabled, we may need to export multiple models as separate files
+    if (tpose) {
+      return saveGltfTpose({ subdivisions, mirroredPose, format, roots, atlasFiles, cubeMeshes, baseName: sanitize(getName()) })
+    }
+
     const { gltf, buffers } = await exportGltf({
       subdivisions: subdivisions,
       mirroredPose: mirroredPose,
-      roots: getExportRoots(),
+      roots: roots,
       textureAtlas: atlasFiles,
       skipUuids: cubeMeshes
     })
@@ -392,6 +400,175 @@ window.saveGltf = async (options = {}) => {
   }
 }
 
+// T-pose export for glTF: resets bones to T-pose, removes base, exports each model separately
+async function saveGltfTpose ({ subdivisions, mirroredPose, format, roots, atlasFiles, cubeMeshes, baseName }) {
+  // Filter out base meshes
+  const baseNames = new Set(['base', 'baseRim'])
+  const filteredRoots = roots.map(root => {
+    const clone = root.clone()
+    clone.traverse(obj => {
+      if (obj.isMesh && baseNames.has(obj.name)) {
+        obj.visible = false
+      }
+    })
+    return clone
+  })
+
+  // Get all skinned meshes and their skeletons across all roots
+  const models = []
+  filteredRoots.forEach((root, idx) => {
+    const skinnedMeshes = []
+    root.traverse(obj => {
+      if (obj.isSkinnedMesh || (obj.skeleton && obj.skeleton.bones && obj.skeleton.bones.length > 0)) {
+        skinnedMeshes.push(obj)
+      }
+    })
+    if (skinnedMeshes.length > 0) {
+      models.push({ root: root, skinnedMeshes, index: idx })
+    }
+  })
+
+  // Save original bone transforms for all skeletons
+  const savedTransforms = new Map()
+  for (const { skinnedMeshes } of models) {
+    for (const mesh of skinnedMeshes) {
+      if (mesh.skeleton && mesh.skeleton.bones) {
+        for (const bone of mesh.skeleton.bones) {
+          if (!savedTransforms.has(bone.uuid)) {
+            savedTransforms.set(bone.uuid, {
+              position: bone.position.clone(),
+              quaternion: bone.quaternion.clone(),
+              scale: bone.scale.clone(),
+              matrix: bone.matrix.clone(),
+              matrixWorld: bone.matrixWorld.clone()
+            })
+          }
+        }
+      }
+    }
+  }
+
+  // Reset bones to T-pose (rest pose)
+  for (const { skinnedMeshes } of models) {
+    for (const mesh of skinnedMeshes) {
+      if (mesh.skeleton && mesh.skeleton.bones) {
+        for (const bone of mesh.skeleton.bones) {
+          // Reset to identity (T-pose = rest pose)
+          bone.position.set(0, 0, 0)
+          bone.quaternion.identity()
+          bone.scale.set(1, 1, 1)
+          bone.updateMatrix()
+        }
+        mesh.skeleton.calculateInverses()
+        for (const m of skinnedMeshes) {
+          m.updateMatrixWorld(true)
+        }
+      }
+    }
+  }
+
+  try {
+    // Export each model separately
+    for (let i = 0; i < filteredRoots.length; i++) {
+      const root = filteredRoots[i]
+      const modelName = roots[i].name || `model_${i}`
+      const safeName = sanitize(modelName || `model_${i}`)
+
+      const { gltf, buffers } = await exportGltf({
+        subdivisions: subdivisions,
+        mirroredPose: mirroredPose,
+        roots: [root],
+        textureAtlas: atlasFiles,
+        skipUuids: cubeMeshes
+      })
+
+      if (!gltf) continue
+
+      const modelBaseName = `${baseName}_${safeName}`
+
+      if (format === 'single') {
+        const gltfOut = JSON.parse(JSON.stringify(gltf))
+        if (buffers.length > 0) {
+          const buffer = buffers[0]
+          const uint8 = new Uint8Array(buffer)
+          let binary = ''
+          const chunkSize = 8192
+          for (let i = 0; i < uint8.length; i += chunkSize) {
+            const chunk = uint8.subarray(i, i + chunkSize)
+            binary += String.fromCharCode.apply(null, chunk)
+          }
+          const base64 = window.btoa(binary)
+          gltfOut.buffers = [{
+            byteLength: (gltf.buffers && gltf.buffers[0] ? gltf.buffers[0].byteLength : 0) || 0,
+            uri: 'data:application/octet-stream;base64,' + base64
+          }]
+        }
+        for (const entry of atlasFiles.values()) {
+          for (const img of (gltfOut.images || [])) {
+            if (img.uri === 'textures/' + entry.file) img.uri = entry.dataUri
+          }
+        }
+        saveAs(new Blob([JSON.stringify(gltfOut, null, 2)], { type: 'model/gltf+json' }), `${modelBaseName}.gltf`)
+      } else {
+        // ZIP folder: scene.gltf + scene.bin + textures/*.png.
+        const gltfOut = JSON.parse(JSON.stringify(gltf))
+        if (gltfOut.buffers && gltfOut.buffers.length > 0 && buffers.length > 0) {
+          gltfOut.buffers[0].uri = 'scene.bin'
+        }
+
+        const zipEntries = [
+          { name: `${safeName}/scene.gltf`, data: JSON.stringify(gltfOut, null, 2) }
+        ]
+        if (buffers.length > 0) {
+          zipEntries.push({ name: `${safeName}/scene.bin`, data: buffers[0] })
+        }
+
+        const usedFiles = new Set((gltfOut.images || []).map(img => {
+          const prefix = 'textures/'
+          return img.uri && img.uri.startsWith(prefix) ? img.uri.slice(prefix.length) : null
+        }).filter(Boolean))
+        for (const entry of atlasFiles.values()) {
+          if (usedFiles.has(entry.file)) {
+            zipEntries.push({ name: `${safeName}/textures/${entry.file}`, data: dataUriToBytes(entry.dataUri) })
+          }
+        }
+
+        const zipBytes = createZip(zipEntries)
+        saveAs(new Blob([zipBytes], { type: 'application/zip' }), `${modelBaseName}.zip`)
+      }
+    }
+
+    console.log('[Herosaver] glTF T-pose export complete')
+  } catch (e) {
+    console.error('[Herosaver] glTF T-pose export failed:', e)
+  } finally {
+    // Restore original bone transforms
+    for (const [uuid, transform] of savedTransforms) {
+      let targetBone = null
+      for (const { skinnedMeshes } of models) {
+        for (const mesh of skinnedMeshes) {
+          if (mesh.skeleton && mesh.skeleton.bones) {
+            const bone = mesh.skeleton.bones.find(b => b.uuid === uuid)
+            if (bone) targetBone = bone
+          }
+        }
+      }
+      if (targetBone) {
+        targetBone.position.copy(transform.position)
+        targetBone.quaternion.copy(transform.quaternion)
+        targetBone.scale.copy(transform.scale)
+        targetBone.matrix.copy(transform.matrix)
+        targetBone.matrixWorld.copy(transform.matrixWorld)
+      }
+    }
+    for (const { skinnedMeshes } of models) {
+      for (const m of skinnedMeshes) {
+        m.updateMatrixWorld(true)
+      }
+    }
+  }
+}
+
 // export character as OBJ file with UVs and a MTL referencing the saved color
 // atlas. The atlas PNGs are written first (saveTextures), then every mesh is
 // baked to world space and its local 0-1 UVs are remapped into its atlas
@@ -409,11 +586,13 @@ window.saveObj = () => {
   }
 }
 
-// export character as a rigged BINARY FBX 7.5 file with the same inputs as the
+// export character as a rigged ASCII FBX 7.4 file with the same inputs as the
 // glTF exporter (original scene graph, bones, skinning and embedded color atlas).
 // Delivered as a .zip like the other exports; the atlas textures are embedded
-// as raw PNG bytes in the FBX itself (Video/Content), so no extra files needed.
-window.saveFbx = async () => {
+// as base64 in the FBX itself (Video/Content), so no extra files needed.
+window.saveFbx = async (options = {}) => {
+  const tpose = options.tpose || false
+
   try {
     console.log('[Herosaver] Starting FBX export...')
     const atlasFiles = buildAtlasFiles()
@@ -426,8 +605,14 @@ window.saveFbx = async () => {
       console.warn('[Herosaver] cube detection failed, exporting with the wrapping cube:', e)
     }
 
-    const { fbx } = await exportFbx({
-      roots: getExportRoots(),
+    const roots = getExportRoots()
+
+    if (tpose) {
+      return saveFbxTpose({ roots, atlasFiles, cubeMeshes, baseName: sanitize(getName()) })
+    }
+
+    const { fbx } = await exportFbxASCII({
+      roots: roots,
       textureAtlas: atlasFiles,
       skipUuids: cubeMeshes
     })
@@ -440,9 +625,127 @@ window.saveFbx = async () => {
     const baseName = sanitize(getName())
     const zipBytes = createZip([{ name: `${baseName}.fbx`, data: fbx }])
     saveAs(new Blob([zipBytes], { type: 'application/zip' }), `${baseName}.zip`)
-    console.log(`[Herosaver] FBX export complete (${(fbx.byteLength / 1024 / 1024).toFixed(1)} MB binary)`)
+    console.log(`[Herosaver] FBX export complete (${(fbx.length / 1024 / 1024).toFixed(1)} MB ASCII)`)
   } catch (e) {
     console.error('[Herosaver] FBX export failed:', e)
+  }
+}
+
+// T-pose export for FBX: resets bones to T-pose, removes base, exports each model separately
+async function saveFbxTpose ({ roots, atlasFiles, cubeMeshes, baseName }) {
+  // Filter out base meshes
+  const baseNames = new Set(['base', 'baseRim'])
+  const filteredRoots = roots.map(root => {
+    const clone = root.clone()
+    clone.traverse(obj => {
+      if (obj.isMesh && baseNames.has(obj.name)) {
+        obj.visible = false
+      }
+    })
+    return clone
+  })
+
+  // Get all skinned meshes and their skeletons across all roots
+  const models = []
+  filteredRoots.forEach((root, idx) => {
+    const skinnedMeshes = []
+    root.traverse(obj => {
+      if (obj.isSkinnedMesh || (obj.skeleton && obj.skeleton.bones && obj.skeleton.bones.length > 0)) {
+        skinnedMeshes.push(obj)
+      }
+    })
+    if (skinnedMeshes.length > 0) {
+      models.push({ root: root, skinnedMeshes, index: idx })
+    }
+  })
+
+  // Save original bone transforms for all skeletons
+  const savedTransforms = new Map()
+  for (const { skinnedMeshes } of models) {
+    for (const mesh of skinnedMeshes) {
+      if (mesh.skeleton && mesh.skeleton.bones) {
+        for (const bone of mesh.skeleton.bones) {
+          if (!savedTransforms.has(bone.uuid)) {
+            savedTransforms.set(bone.uuid, {
+              position: bone.position.clone(),
+              quaternion: bone.quaternion.clone(),
+              scale: bone.scale.clone(),
+              matrix: bone.matrix.clone(),
+              matrixWorld: bone.matrixWorld.clone()
+            })
+          }
+        }
+      }
+    }
+  }
+
+  // Reset bones to T-pose (rest pose)
+  for (const { skinnedMeshes } of models) {
+    for (const mesh of skinnedMeshes) {
+      if (mesh.skeleton && mesh.skeleton.bones) {
+        for (const bone of mesh.skeleton.bones) {
+          // Reset to identity (T-pose = rest pose)
+          bone.position.set(0, 0, 0)
+          bone.quaternion.identity()
+          bone.scale.set(1, 1, 1)
+          bone.updateMatrix()
+        }
+        mesh.skeleton.calculateInverses()
+        for (const m of skinnedMeshes) {
+          m.updateMatrixWorld(true)
+        }
+      }
+    }
+  }
+
+  try {
+    // Export each model separately
+    for (let i = 0; i < filteredRoots.length; i++) {
+      const root = filteredRoots[i]
+      const modelName = roots[i].name || `model_${i}`
+      const safeName = sanitize(modelName || `model_${i}`)
+
+      const { fbx } = await exportFbxASCII({
+        roots: [root],
+        textureAtlas: atlasFiles,
+        skipUuids: cubeMeshes
+      })
+
+      if (!fbx) continue
+
+      const modelBaseName = `${baseName}_${safeName}`
+      const zipBytes = createZip([{ name: `${safeName}/${safeName}.fbx`, data: fbx }])
+      saveAs(new Blob([zipBytes], { type: 'application/zip' }), `${modelBaseName}.zip`)
+    }
+
+    console.log('[Herosaver] FBX T-pose export complete')
+  } catch (e) {
+    console.error('[Herosaver] FBX T-pose export failed:', e)
+  } finally {
+    // Restore original bone transforms
+    for (const [uuid, transform] of savedTransforms) {
+      let targetBone = null
+      for (const { skinnedMeshes } of models) {
+        for (const mesh of skinnedMeshes) {
+          if (mesh.skeleton && mesh.skeleton.bones) {
+            const bone = mesh.skeleton.bones.find(b => b.uuid === uuid)
+            if (bone) targetBone = bone
+          }
+        }
+      }
+      if (targetBone) {
+        targetBone.position.copy(transform.position)
+        targetBone.quaternion.copy(transform.quaternion)
+        targetBone.scale.copy(transform.scale)
+        targetBone.matrix.copy(transform.matrix)
+        targetBone.matrixWorld.copy(transform.matrixWorld)
+      }
+    }
+    for (const { skinnedMeshes } of models) {
+      for (const m of skinnedMeshes) {
+        m.updateMatrixWorld(true)
+      }
+    }
   }
 }
 
