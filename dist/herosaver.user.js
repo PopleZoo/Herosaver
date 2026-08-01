@@ -106,15 +106,17 @@
       return b
     }
 
-    const saveBtn = makeBtn('Save', '', true)
+const saveBtn = makeBtn('Save', '', true)
     saveBtn.addEventListener('click', () => {
       const state = {
         format: select.value,
         rigged: select.value === 'gltf' || select.value === 'fbx'
       }
       console.log('[Herosaver] Panel Save clicked, state:', state)
-      // Must use unsafeWindow to reach the page's global scope (Tampermonkey isolates window)
+      console.log('[Herosaver] unsafeWindow === window?', unsafeWindow === window)
+      console.log('[Herosaver] unsafeWindow.__herosaverSaveState before:', unsafeWindow.__herosaverSaveState)
       unsafeWindow.__herosaverSaveState = state
+      console.log('[Herosaver] unsafeWindow.__herosaverSaveState after:', unsafeWindow.__herosaverSaveState)
       run('saveSelected')
     })
     panel.appendChild(saveBtn)
