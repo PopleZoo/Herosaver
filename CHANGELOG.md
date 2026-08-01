@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.5.7]
+
+### Fixed
+- glTF export was emitting the HeroForge display-case icosphere shells (many
+  small spheres arranged around the model). These are `visible=false` in the
+  scene; OBJ/STL skip them but the glTF exporter did not. Invisible subtrees are
+  now skipped (bones hidden under them are still re-synthesized for the rig), and
+  the exporter logs how many invisible objects it skipped.
+
 ## [1.5.6]
 
 ### Fixed

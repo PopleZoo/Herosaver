@@ -390,6 +390,8 @@ export async function exportGltf (options = {}) {
   // LOCAL matrix (relative to parent) so glTF composes the same world matrices.
   // Skinned mesh children include their bones, giving the joint node hierarchy.
   const seen = new Set()
+  let skippedInvisible = 0
+  const invisibleNames = []
 
   const processNode = (object, parentObject) => {
     if (!object || seen.has(object.uuid)) return null
@@ -397,6 +399,16 @@ export async function exportGltf (options = {}) {
 
     // Skip display-case / dome shells (never exported in OBJ/STL either).
     if (skipUuids.has(object.uuid)) return null
+
+    // Skip invisible subtrees. HeroForge hides the display case / preview
+    // shells by toggling visible=false; OBJ/STL skip them and so must glTF.
+    // Bones that only live under hidden parents are re-synthesized by the
+    // skin pass below, so the rig is unaffected.
+    if (object.visible === false) {
+      skippedInvisible++
+      if (invisibleNames.length < 20) invisibleNames.push(object.name || object.type)
+      return null
+    }
 
     object.updateMatrix()
 
@@ -550,6 +562,10 @@ export async function exportGltf (options = {}) {
   }
 
   // ── Finalize ──────────────────────────────────────────────────────────────
+  if (skippedInvisible > 0) {
+    console.log(`[Herosaver] glTF: skipped ${skippedInvisible} invisible object(s) (${invisibleNames.slice(0, 5).join(', ') || 'unnamed'}...)`)
+  }
+
   const buffer = bufferWriter.finalizeBuffer()
   gltf.bufferViews = bufferWriter.bufferViews
   gltf.buffers = [{ byteLength: buffer.byteLength }]
