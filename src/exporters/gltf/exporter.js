@@ -118,15 +118,14 @@ function ensureMorphAttributes (geometry) {
  * @param {Array} options.roots - original export roots (getExportRoots())
  * @param {number} options.subdivisions - unused for rigged export
  * @param {boolean} options.mirroredPose - unused
- * @param {boolean} options.embedBuffers - embed buffer as data URI
- * @param {Map} options.textureDataUris - texture uuid -> data URI (color atlases)
+ * @param {Map} options.textureAtlas - texture uuid -> { file, dataUri } (color atlases)
  * @param {Set} options.skipUuids - mesh uuids to skip (display case / dome)
  * @returns {Object} { gltf, buffers }
  */
 export async function exportGltf (options = {}) {
   const roots = options.roots || []
   const skipUuids = options.skipUuids || new Set()
-  const textureDataUris = options.textureDataUris || new Map()
+  const textureAtlas = options.textureAtlas || new Map()
 
   if (roots.length === 0) return { gltf: null, buffers: [] }
 
@@ -159,8 +158,8 @@ export async function exportGltf (options = {}) {
     skins: []
   }
 
-  // texture data URI -> image index
-  const imageIndexByUri = new Map()
+  // texture entry (file path) -> image index
+  const imageIndexByFile = new Map()
   // material uuid -> glTF material index
   const materialIndexByUuid = new Map()
   // object uuid -> node index
@@ -172,12 +171,13 @@ export async function exportGltf (options = {}) {
   // mesh cache key -> mesh index (dedupe shared geometry + material)
   const meshCache = new Map()
 
-  const getImageIndex = uri => {
-    if (imageIndexByUri.has(uri)) return imageIndexByUri.get(uri)
+  const getImageIndex = entry => {
+    const file = entry.file
+    if (imageIndexByFile.has(file)) return imageIndexByFile.get(file)
     const index = gltf.images.length
-    gltf.images.push({ uri, name: 'atlas_' + index })
+    gltf.images.push({ uri: 'textures/' + file, name: file })
     gltf.textures.push({ sampler: 0, source: index })
-    imageIndexByUri.set(uri, index)
+    imageIndexByFile.set(file, index)
     return index
   }
 
@@ -199,12 +199,14 @@ export async function exportGltf (options = {}) {
     // HeroForge samples a shared color atlas through the colorAtlasMap uniform,
     // with per-mesh rects given by uvPosScl (offset.xy, scale.zw). The UVs are
     // remapped into atlas space at write time, so the atlas can be the base
-    // color texture.
+    // color texture. The image is referenced by its file path (textures/<file>)
+    // so a folder/zip export can place the PNG beside the .gltf; saveGltf
+    // resolves it to a data URI when embedding into a single file.
     const atlasTex = m.uniforms && m.uniforms.colorAtlasMap && m.uniforms.colorAtlasMap.value
-    const uri = atlasTex && textureDataUris.get(atlasTex.uuid)
-    if (uri) {
+    const atlasEntry = atlasTex && textureAtlas.get(atlasTex.uuid)
+    if (atlasEntry) {
       gltfMaterial.pbrMetallicRoughness.baseColorTexture = {
-        index: getImageIndex(uri),
+        index: getImageIndex(atlasEntry),
         texCoord: 0
       }
     }

@@ -6,6 +6,7 @@ import { saveAs } from 'file-saver'
 import { character, getName, process, bakeSkinnedVertex } from './utils'
 import { parseSTL, findConnectedComponents, analyzeShell } from './cube-remover'
 import { exportGltf } from './exporters/gltf'
+import { createZip } from './exporters/gltf/zip'
 
 // Export process for debugging
 window.process = process
@@ -16,7 +17,7 @@ const sanitize = s => s.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_').repl
 
 // Bump with each release so stale CDN/browser copies are easy to spot from the
 // console: window.herosaverVersion.
-window.herosaverVersion = '1.5.3'
+window.herosaverVersion = '1.5.4'
 
 // ─── scene discovery ────────────────────────────────────────────────────────
 // HeroForge keeps the whole composition (figure + mounts + companions) inside
@@ -272,15 +273,27 @@ window.saveCleanStl = subdivisions => {
   saveAs(new Blob([cleaned], { type: 'application/octet-stream' }), `${sanitize(getName())}_clean.stl`)
 }
 
+// Convert a base64 data URI to a Uint8Array (used to put PNGs into the zip).
+const dataUriToBytes = dataUri => {
+  const comma = dataUri.indexOf(',')
+  const b64 = dataUri.slice(comma + 1)
+  const bin = window.atob(b64)
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  return bytes
+}
+
 window.saveGltf = async (options = {}) => {
   const subdivisions = options.subdivisions || 2
   const mirroredPose = options.mirroredPose || !!character.data.mirroredPose
-  const embedBuffers = options.embedBuffers !== false
+  // 'zip' = one .zip with scene.gltf + scene.bin + textures/*.png (default),
+  // 'single' = one self-contained .gltf with embedded buffer + textures.
+  const format = options.format || 'zip'
 
   try {
-    console.log('[Herosaver] Starting glTF export...')
-    const textureDataUris = buildGltfAtlasDataUris()
-    console.log(`[Herosaver] glTF: built ${textureDataUris.size} atlas data URI(s)`)
+    console.log(`[Herosaver] Starting glTF export (${format})...`)
+    const atlasFiles = buildGltfAtlasFiles()
+    console.log(`[Herosaver] glTF: built ${atlasFiles.size} atlas texture(s)`)
 
     let cubeMeshes = new Set()
     try {
@@ -292,9 +305,8 @@ window.saveGltf = async (options = {}) => {
     const { gltf, buffers } = await exportGltf({
       subdivisions: subdivisions,
       mirroredPose: mirroredPose,
-      embedBuffers: embedBuffers,
       roots: getExportRoots(),
-      textureDataUris: textureDataUris,
+      textureAtlas: atlasFiles,
       skipUuids: cubeMeshes
     })
 
@@ -307,9 +319,11 @@ window.saveGltf = async (options = {}) => {
       }
     }
 
-    if (embedBuffers) {
-      // Embed buffers as data URIs
-      const gltfWithBuffers = { ...gltf }
+    const baseName = sanitize(getName())
+
+    if (format === 'single') {
+      // One self-contained .gltf: embed buffer and textures as data URIs.
+      const gltfOut = JSON.parse(JSON.stringify(gltf))
       if (buffers.length > 0) {
         const buffer = buffers[0]
         const uint8 = new Uint8Array(buffer)
@@ -320,18 +334,45 @@ window.saveGltf = async (options = {}) => {
           binary += String.fromCharCode.apply(null, chunk)
         }
         const base64 = window.btoa(binary)
-        gltfWithBuffers.buffers = [{
+        gltfOut.buffers = [{
           byteLength: (gltf.buffers && gltf.buffers[0] ? gltf.buffers[0].byteLength : 0) || 0,
           uri: 'data:application/octet-stream;base64,' + base64
         }]
       }
-      saveAs(new Blob([JSON.stringify(gltfWithBuffers, null, 2)], { type: 'model/gltf+json' }), `${sanitize(getName())}.gltf`)
-    } else {
-      // Separate .gltf + .bin
-      saveAs(new Blob([JSON.stringify(gltf, null, 2)], { type: 'model/gltf+json' }), `${sanitize(getName())}.gltf`)
-      if (buffers.length > 0) {
-        saveAs(new Blob([buffers[0]], { type: 'application/octet-stream' }), `${sanitize(getName())}.bin`)
+      // Resolve textures/<file> image URIs back to their data URIs.
+      for (const entry of atlasFiles.values()) {
+        for (const img of (gltfOut.images || [])) {
+          if (img.uri === 'textures/' + entry.file) img.uri = entry.dataUri
+        }
       }
+      saveAs(new Blob([JSON.stringify(gltfOut, null, 2)], { type: 'model/gltf+json' }), `${baseName}.gltf`)
+    } else {
+      // ZIP folder: scene.gltf + scene.bin + textures/*.png.
+      const gltfOut = JSON.parse(JSON.stringify(gltf))
+      if (gltfOut.buffers && gltfOut.buffers.length > 0 && buffers.length > 0) {
+        gltfOut.buffers[0].uri = 'scene.bin'
+      }
+
+      const zipEntries = [
+        { name: 'scene.gltf', data: JSON.stringify(gltfOut, null, 2) }
+      ]
+      if (buffers.length > 0) {
+        zipEntries.push({ name: 'scene.bin', data: buffers[0] })
+      }
+
+      // Include only the textures the gltf actually references.
+      const usedFiles = new Set((gltfOut.images || []).map(img => {
+        const prefix = 'textures/'
+        return img.uri && img.uri.startsWith(prefix) ? img.uri.slice(prefix.length) : null
+      }).filter(Boolean))
+      for (const entry of atlasFiles.values()) {
+        if (usedFiles.has(entry.file)) {
+          zipEntries.push({ name: 'textures/' + entry.file, data: dataUriToBytes(entry.dataUri) })
+        }
+      }
+
+      const zipBytes = createZip(zipEntries)
+      saveAs(new Blob([zipBytes], { type: 'application/zip' }), `${baseName}.zip`)
     }
     console.log('[Herosaver] glTF export complete')
   } catch (e) {
@@ -783,19 +824,22 @@ const flipAndComposite = (target, kind, pixels) => {
   return flipped
 }
 
-// Build color-atlas PNG data URIs (texture uuid -> data URI) for embedding in
-// the glTF export. Reuses the same flip + eye-composite pipeline as
-// saveTextures so the embedded base color textures match the exported PNGs.
-const buildGltfAtlasDataUris = () => {
+// Build color-atlas PNG entries (texture uuid -> { file, dataUri }) for the
+// glTF export. Reuses the same flip + eye-composite pipeline as saveTextures so
+// the base color textures match the exported PNGs. `file` is the relative
+// filename inside the zip's textures/ folder; dataUri is used when embedding
+// into a single self-contained .gltf.
+const buildGltfAtlasFiles = () => {
   const renderer = window.CK.renderManager.renderer
-  const uris = new Map()
+  const entries = new Map()
+  const nameCounts = {}
 
   findColorBakes().forEach(bake => {
     const rgba = bake.targetsRGBA
     if (!rgba) return
     for (const kind of ['color', 'emissive']) {
       const target = rgba[kind]
-      if (!target || !target.texture || uris.has(target.texture.uuid)) continue
+      if (!target || !target.texture || entries.has(target.texture.uuid)) continue
       const w = target.width
       const h = target.height
       try {
@@ -816,14 +860,18 @@ const buildGltfAtlasDataUris = () => {
         const data = ctx.createImageData(w, h)
         data.data.set(flipped)
         ctx.putImageData(data, 0, 0)
-        uris.set(target.texture.uuid, canvas.toDataURL('image/png'))
+        const base = kind === 'emissive' ? 'emissiveAtlas' : 'colorAtlas'
+        nameCounts[base] = (nameCounts[base] || 0) + 1
+        const suffix = nameCounts[base] === 1 ? '' : `_${nameCounts[base]}`
+        const file = `${sanitize(getName())}_${base}${suffix}.png`
+        entries.set(target.texture.uuid, { file, dataUri: canvas.toDataURL('image/png') })
       } catch (e) {
-        console.warn('[Herosaver] failed to build glTF atlas data URI:', e)
+        console.warn('[Herosaver] failed to build glTF atlas:', e)
       }
     }
   })
 
-  return uris
+  return entries
 }
 
 window.saveTextures = () => {

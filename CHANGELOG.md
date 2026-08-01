@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.5.4]
+
+### Added
+- ZIP packaging for glTF export (`saveGltf()`, default format). The exporter now
+  emits a `.zip` containing `scene.gltf` + `scene.bin` + a `textures/` folder
+  with the color/emissive atlas PNGs as separate files (STORE method, no
+  compression - PNGs are already compressed), instead of embedding everything as
+  bloated base64 data URIs. The previous single self-contained `.gltf` output is
+  still available via `saveGltf({ format: 'single' })`. Internal atlas option
+  renamed from `textureDataUris` to `textureAtlas` (`uuid -> { file, dataUri }`)
+  so the exporter can reference textures by relative path.
+
 ## [1.5.3]
 
 ### Added
