@@ -307,7 +307,9 @@ export async function exportGltf (options = {}) {
     // Skin (JOINTS_0 / WEIGHTS_0) for skinned meshes
     const isSkinned = mesh.isSkinnedMesh ||
       (mesh.skeleton && mesh.skeleton.bones && mesh.skeleton.bones.length > 0)
-    const skinKey = isSkinned && mesh.skeleton ? mesh.skeleton.uuid : 'none'
+    const skinKey = isSkinned && mesh.skeleton
+      ? mesh.skeleton.bones.map(b => b.uuid).join(',')
+      : 'none'
     if (isSkinned && mesh.skeleton) {
       const { joints, weights } = extractSkin(geometry, mesh.skeleton)
       primitive.attributes.JOINTS_0 = writeAttribute('jnt_' + skinKey + '_' + gkey, joints, 4, UNSIGNED_SHORT)
@@ -428,11 +430,36 @@ export async function exportGltf (options = {}) {
   // NOT in the scene graph (some HeroForge compositions keep bones detached from
   // the mesh's children) get synthesized nodes parented under the mesh node, so
   // the joint hierarchy is always complete.
+  //
+  // One skin per UNIQUE skeleton: kitbashed / multi-part characters often have
+  // several skinned meshes sharing a single THREE.Skeleton (or clones with the
+  // same bone set). Emitting a separate glTF skin for each would produce
+  // duplicate armatures in Blender and the "skeletons won't merge" warning, so
+  // meshes that share a skeleton are pointed at the same skin index.
+  const skinIndexBySkeleton = new Map()
+
+  // Key a skeleton by the identity of the bones it wraps. Kitbashing often
+  // clones the THREE.Skeleton wrapper (different skeleton.uuid) around the same
+  // bone objects, so a uuid-only map would still emit duplicate armatures.
+  const skeletonKey = skeleton => {
+    const sig = skeleton.bones.map(b => b.uuid).join(',')
+    if (skeleton._herosaverSkinKey === undefined) skeleton._herosaverSkinKey = sig
+    return skeleton._herosaverSkinKey
+  }
+
   for (let nodeIndex = 0; nodeIndex < nodeObjectByIndex.length; nodeIndex++) {
     const object = nodeObjectByIndex[nodeIndex]
     if (!object || !object.skeleton || !object.skeleton.bones || !object.skeleton.bones.length) continue
 
     const skeleton = object.skeleton
+    const key = skeletonKey(skeleton)
+    let skinIndex = skinIndexBySkeleton.get(key)
+    if (skinIndex !== undefined) {
+      // Shared skeleton - reuse the existing skin so Blender merges the armature.
+      gltf.nodes[nodeIndex].skin = skinIndex
+      continue
+    }
+
     const joints = []
     const inverseBind = new Float32Array(skeleton.bones.length * 16)
     let missingBone = false
@@ -472,13 +499,14 @@ export async function exportGltf (options = {}) {
 
     const ibmAccessor = writeAttribute('ibm_' + skeleton.uuid, inverseBind, 16, FLOAT)
 
-    const skinIndex = gltf.skins.length
+    skinIndex = gltf.skins.length
     gltf.skins.push({
       name: skeleton.name || 'skin_' + skinIndex,
       joints,
       inverseBindMatrices: ibmAccessor,
       skeleton: joints[0]
     })
+    skinIndexBySkeleton.set(skeleton.uuid, skinIndex)
 
     gltf.nodes[nodeIndex].skin = skinIndex
   }

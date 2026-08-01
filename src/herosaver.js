@@ -298,6 +298,15 @@ window.saveGltf = async (options = {}) => {
       skipUuids: cubeMeshes
     })
 
+    if (gltf) {
+      const skinned = (gltf.skins || []).length
+      const jointsTotal = (gltf.skins || []).reduce((n, s) => n + (s.joints ? s.joints.length : 0), 0)
+      console.log(`[Herosaver] glTF: ${(gltf.meshes || []).length} mesh(es), ${skinned} armature skin(s) (${jointsTotal} joints total), ${(gltf.nodes || []).length} node(s)`)
+      if (skinned > 1) {
+        console.warn(`[Herosaver] glTF: ${skinned} separate armature(s) exported. Meshes sharing the same skeleton are merged into one; only genuinely different rigs (e.g. mount/familiar) stay separate. Blender may show a "skeletons won't merge" warning for unrelated rigs.`)
+      }
+    }
+
     if (embedBuffers) {
       // Embed buffers as data URIs
       const gltfWithBuffers = { ...gltf }
