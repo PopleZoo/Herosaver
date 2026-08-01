@@ -279,6 +279,7 @@ window.saveCleanStl = subdivisions => {
 window.saveSelected = () => {
   const state = window.__herosaverSaveState || {}
   const format = state.format || (state.rigged ? 'gltf' : 'obj')
+  console.log('[Herosaver] saveSelected read state:', state, '-> format:', format)
   if (format === 'gltf') return window.saveGltf()
   if (format === 'fbx') return window.saveFbx()
   if (format === 'stl') return window.saveCleanStl()
