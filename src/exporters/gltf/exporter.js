@@ -295,8 +295,12 @@ export async function exportGltf (options = {}) {
       if (uvps) {
         uvArray = new Float32Array(uv.array.length)
         for (let i = 0; i < uv.count; i++) {
+          // Remap into the atlas rect (offset.xy, scale.zw) exactly like the
+          // live shader / OBJ export, but flip V: the saved atlas PNG is stored
+          // vertically mirrored (GL orientation, matching OBJ's bottom-left UV
+          // origin), while glTF UVs have their origin at the top-left.
           uvArray[i * 2] = uv.getX(i) * uvps.z + uvps.x
-          uvArray[i * 2 + 1] = uv.getY(i) * uvps.w + uvps.y
+          uvArray[i * 2 + 1] = 1 - (uv.getY(i) * uvps.w + uvps.y)
         }
       }
       const uvKey = 'uv_' + gkey + '_' + (uvps ? [uvps.x, uvps.y, uvps.z, uvps.w].map(n => +n.toFixed(6)).join(',') : 'raw')

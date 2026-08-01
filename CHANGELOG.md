@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.5.8]
+
+### Fixed
+- glTF textures now apply in Blender. The exported atlas PNGs are stored
+  vertically mirrored (matching the OBJ export's bottom-left UV origin), but
+  glTF UVs have their origin at the top-left, so the whole texture came out
+  flipped. The glTF exporter now flips V when remapping UVs into the atlas.
+
+### Added
+- On-page panel redesigned as a "Save as" dropdown (STL / OBJ + Textures /
+  glTF) with a "Rigged (glTF)" toggle and a separate "Save JSON" button.
+  OBJ/STL cannot carry a rig, so ticking "Rigged" exports the rigged glTF
+  (textures included); leaving it off exports the selected unrigged format.
+  `saveSelected()` dispatches from the panel's choices.
+- OBJ + Textures now downloads as a single `.zip` containing the `.obj`, its
+  `.mtl`, and the atlas PNGs it references (same STORE zip as glTF). STL also
+  downloads as a `.zip`. Atlas PNGs are built once in memory (`buildAtlasFiles`)
+  and shared by the OBJ, glTF and standalone-texture paths.
+
 ## [1.5.7]
 
 ### Fixed

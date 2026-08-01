@@ -17,7 +17,7 @@ const sanitize = s => s.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_').repl
 
 // Bump with each release so stale CDN/browser copies are easy to spot from the
 // console: window.herosaverVersion.
-window.herosaverVersion = '1.5.7'
+window.herosaverVersion = '1.5.8'
 
 // ─── scene discovery ────────────────────────────────────────────────────────
 // HeroForge keeps the whole composition (figure + mounts + companions) inside
@@ -263,10 +263,22 @@ const exportSTLBufferClean = subdivisions => {
 }
 
 // export character as STL file, cube removed (binary to avoid JS string length
-// limits on large models). The raw (cube-included) export has been removed.
+// limits on large models). Delivered as a .zip like the other exports.
 window.saveCleanStl = subdivisions => {
   const cleaned = exportSTLBufferClean(subdivisions)
-  saveAs(new Blob([cleaned], { type: 'application/octet-stream' }), `${sanitize(getName())}_clean.stl`)
+  const baseName = sanitize(getName()) + '_clean'
+  const zipBytes = createZip([{ name: `${baseName}.stl`, data: cleaned }])
+  saveAs(new Blob([zipBytes], { type: 'application/zip' }), `${baseName}.zip`)
+}
+
+// Dispatched by the on-page panel's "Save" button. The panel sets
+// window.__herosaverSaveState = { format: 'stl'|'obj'|'gltf', rigged: bool }
+// before calling run('saveSelected').
+window.saveSelected = () => {
+  const state = window.__herosaverSaveState || {}
+  if (state.rigged) return window.saveGltf()
+  if (state.format === 'stl') return window.saveCleanStl()
+  return window.saveObj()
 }
 
 // Convert a base64 data URI to a Uint8Array (used to put PNGs into the zip).
@@ -288,7 +300,7 @@ window.saveGltf = async (options = {}) => {
 
   try {
     console.log(`[Herosaver] Starting glTF export (${format})...`)
-    const atlasFiles = buildGltfAtlasFiles()
+    const atlasFiles = buildAtlasFiles()
     console.log(`[Herosaver] glTF: built ${atlasFiles.size} atlas texture(s)`)
 
     let cubeMeshes = new Set()
@@ -385,16 +397,15 @@ window.saveGltf = async (options = {}) => {
 // own atlas) are grouped under their own MTL material.
 window.saveObj = () => {
   try {
-    saveObjInner()
+    const atlases = buildAtlasFiles()
+    console.log(`[Herosaver] saveObj: built ${atlases.size} atlas texture(s)`)
+    saveObjInner(atlases)
   } catch (e) {
     console.error('[Herosaver] saveObj failed:', e)
   }
 }
 
-const saveObjInner = () => {
-  const atlases = window.saveTextures()
-  console.log(`[Herosaver] saveObj: saved ${atlases.size} atlas texture(s)`)
-
+const saveObjInner = (atlases) => {
   const vertices = []
   const uvs = []
   const faces = []
@@ -553,12 +564,6 @@ ${faces.join('\n')}
 `
 
   console.log(`[Herosaver] saveObj: built ${vertices.length} vertices / ${uvs.length} UVs / ${faces.length} faces (${(obj.length / 1024 / 1024).toFixed(1)} MB)`)
-  try {
-    saveAs(new Blob([obj]), `${sanitize(getName())}.obj`)
-    console.log('[Herosaver] saveObj: .obj download triggered')
-  } catch (e) {
-    console.error('[Herosaver] failed to save OBJ:', e)
-  }
 
   const mtl = []
   for (const name of mtlOrder) {
@@ -574,11 +579,25 @@ ${faces.join('\n')}
     if (file) mtl.push(`map_Kd ${file}`)
   }
 
+  // Everything in one zip: the .obj, its .mtl, and the atlas PNGs it references.
+  const baseName = sanitize(getName())
+  const zipEntries = [
+    { name: `${baseName}.obj`, data: obj },
+    { name: `${baseName}.mtl`, data: mtl.join('\n') }
+  ]
+  const usedFiles = new Set(mtlMaterials.values())
+  for (const entry of atlases.values()) {
+    if (usedFiles.has(entry.file)) {
+      zipEntries.push({ name: entry.file, data: dataUriToBytes(entry.dataUri) })
+    }
+  }
+
   try {
-    saveAs(new Blob([mtl.join('\n')], { type: 'text/plain' }), `${sanitize(getName())}.mtl`)
-    console.log('[Herosaver] saveObj: .mtl download triggered')
+    const zipBytes = createZip(zipEntries)
+    saveAs(new Blob([zipBytes], { type: 'application/zip' }), `${baseName}.zip`)
+    console.log('[Herosaver] saveObj: .zip download triggered')
   } catch (e) {
-    console.error('[Herosaver] failed to save MTL:', e)
+    console.error('[Herosaver] failed to save OBJ zip:', e)
   }
 }
 
@@ -820,12 +839,11 @@ const flipAndComposite = (target, kind, pixels) => {
   return flipped
 }
 
-// Build color-atlas PNG entries (texture uuid -> { file, dataUri }) for the
-// glTF export. Reuses the same flip + eye-composite pipeline as saveTextures so
-// the base color textures match the exported PNGs. `file` is the relative
-// filename inside the zip's textures/ folder; dataUri is used when embedding
-// into a single self-contained .gltf.
-const buildGltfAtlasFiles = () => {
+// Build color-atlas PNG entries (texture uuid -> { file, dataUri, width, height })
+// for every export. Reuses the same flip + eye-composite pipeline as saveTextures
+// so the exported base color textures match. `file` is the relative filename used
+// inside zips; dataUri is used when embedding into a single self-contained .gltf.
+const buildAtlasFiles = () => {
   const renderer = window.CK.renderManager.renderer
   const entries = new Map()
   const nameCounts = {}
@@ -860,7 +878,8 @@ const buildGltfAtlasFiles = () => {
         nameCounts[base] = (nameCounts[base] || 0) + 1
         const suffix = nameCounts[base] === 1 ? '' : `_${nameCounts[base]}`
         const file = `${sanitize(getName())}_${base}${suffix}.png`
-        entries.set(target.texture.uuid, { file, dataUri: canvas.toDataURL('image/png') })
+        const dataUri = canvas.toDataURL('image/png')
+        entries.set(target.texture.uuid, { file, dataUri, width: w, height: h })
       } catch (e) {
         console.warn('[Herosaver] failed to build glTF atlas:', e)
       }
@@ -871,76 +890,15 @@ const buildGltfAtlasFiles = () => {
 }
 
 window.saveTextures = () => {
-  const renderer = window.CK.renderManager.renderer
+  const entries = buildAtlasFiles()
   const manifest = new Map()
-  const nameCounts = {}
 
-  const saveTarget = (target, kind) => {
-    const w = target.width
-    const h = target.height
-    const pixels = new Uint8Array(w * h * 4)
-
-    renderer.readRenderTargetPixels(
-      target,
-      0,
-      0,
-      w,
-      h,
-      pixels
-    )
-
-    // Emissive bakes are sometimes not populated; skip a blank emissive atlas.
-    if (kind === 'emissive') {
-      let lit = false
-      for (let i = 0; i < pixels.length; i += 4) {
-        if (pixels[i] || pixels[i + 1] || pixels[i + 2]) { lit = true; break }
-      }
-      if (!lit) return
-    }
-
-    const base = kind === 'emissive' ? 'emissiveAtlas' : 'colorAtlas'
-    nameCounts[base] = (nameCounts[base] || 0) + 1
-    const suffix = nameCounts[base] === 1 ? '' : `_${nameCounts[base]}`
-    const file = `${sanitize(getName())}_${base}${suffix}.png`
-
-    const flipped = flipAndComposite(target, kind, pixels)
-
-    const canvas = document.createElement('canvas')
-    canvas.width = w
-    canvas.height = h
-
-    const ctx = canvas.getContext('2d')
-    const data = ctx.createImageData(w, h)
-
-    data.data.set(flipped)
-    ctx.putImageData(data, 0, 0)
-
-    canvas.toBlob(blob => {
-      if (blob) {
-        saveAs(blob, file)
-      }
-    }, 'image/png')
-
-    manifest.set(target.texture.uuid, { file, width: w, height: h })
+  // Download each atlas PNG individually (kept for direct calls; the OBJ and
+  // glTF exports zip them up instead).
+  for (const [uuid, entry] of entries) {
+    saveAs(new Blob([dataUriToBytes(entry.dataUri)], { type: 'image/png' }), entry.file)
+    manifest.set(uuid, { file: entry.file, width: entry.width, height: entry.height })
   }
-
-  findColorBakes().forEach(bake => {
-    const rgba = bake.targetsRGBA
-    if (!rgba) return
-
-    // The color atlas is the important one; emissive is included when the bake
-    // provides it (some compositions have glowing parts). Each target is saved
-    // independently so one unreadable bake can't abort the rest.
-    for (const kind of ['color', 'emissive']) {
-      const target = rgba[kind]
-      if (!target || !target.texture || manifest.has(target.texture.uuid)) continue
-      try {
-        saveTarget(target, kind)
-      } catch (e) {
-        console.warn('[Herosaver] failed to save', kind, 'atlas:', e)
-      }
-    }
-  })
 
   window.__herosaverAtlases = manifest
   return manifest

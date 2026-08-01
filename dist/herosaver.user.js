@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Herosaver
 // @namespace    https://github.com/PopleZoo/Herosaver
-// @version      1.5.7
+// @version      1.5.8
 // @description  Save Configuration and STLs from websites using the THREE.JS framework
 // @author       reformagus&D1amondweaver
 // @homepageURL  https://github.com/PopleZoo/Herosaver
@@ -33,7 +33,6 @@
   GM_registerMenuCommand('Herosaver: Save OBJ and Textures', () => run('saveObj'))
   GM_registerMenuCommand('Herosaver: Save glTF (rigged)', () => run('saveGltf'))
   GM_registerMenuCommand('Herosaver: Save JSON', () => run('saveJson'))
-
   // ─── Remove any foreign "Save STL" button ─────────────────────────────────
   // Drop any other on-page control labelled exactly "Save STL" that this script
   // did not create (e.g. a leftover button from another tool), so only the
@@ -65,8 +64,43 @@
 
     const title = document.createElement('div')
     title.textContent = 'Herosaver'
-    title.style.cssText = 'color:#9ca3af;font-weight:600;font-size:11px;letter-spacing:.05em;text-transform:uppercase;margin-bottom:2px'
+    title.style.cssText = 'color:#9ca3af;font-weight:600;font-size:11px;letter-spacing:.05em;text-transform:uppercase;margin-bottom:6px'
     panel.appendChild(title)
+
+    const row = (children) => {
+      const r = document.createElement('div')
+      r.style.cssText = 'display:flex;align-items:center;gap:8px'
+      children.forEach(c => r.appendChild(c))
+      return r
+    }
+
+    // "Save as" format dropdown.
+    const select = document.createElement('select')
+    select.style.cssText = 'background:#374151;color:#fff;border:0;border-radius:6px;padding:6px 8px;font-size:13px;cursor:pointer'
+    const options = [
+      ['stl', 'STL'],
+      ['obj', 'OBJ + Textures'],
+      ['gltf', 'glTF']
+    ]
+    options.forEach(([value, label]) => {
+      const o = document.createElement('option')
+      o.value = value
+      o.textContent = label
+      if (value === 'obj') o.selected = true
+      select.appendChild(o)
+    })
+    panel.appendChild(row([select]))
+
+    // Rigged toggle. OBJ/STL can't carry a rig, so ticking it exports the rigged
+    // glTF instead (which also bundles the textures).
+    const rigged = document.createElement('input')
+    rigged.type = 'checkbox'
+    rigged.checked = true
+    const rigLabel = document.createElement('label')
+    rigLabel.style.cssText = 'color:#e5e7eb;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:6px'
+    rigLabel.appendChild(rigged)
+    rigLabel.appendChild(document.createTextNode('Rigged (glTF)'))
+    panel.appendChild(row([rigLabel]))
 
     const makeBtn = (label, fn, primary) => {
       const b = document.createElement('button')
@@ -76,14 +110,18 @@
         'padding:7px 12px', 'font-size:13px', 'font-weight:600', 'text-align:left',
         primary ? 'background:#2563eb' : 'background:#374151', 'color:#fff'
       ].join(';')
-      b.addEventListener('click', () => run(fn))
+      b.addEventListener('click', () => { if (fn) run(fn) })
       return b
     }
 
-    // "Save Clean STL" runs the cube-removing export (saveCleanStl).
-    panel.appendChild(makeBtn('Save Clean STL', 'saveCleanStl', true))
-    panel.appendChild(makeBtn('Save OBJ and Textures', 'saveObj', false))
-    panel.appendChild(makeBtn('Save glTF (rigged)', 'saveGltf', false))
+    const saveBtn = makeBtn('Save', '', true)
+    saveBtn.addEventListener('click', () => {
+      window.__herosaverSaveState = { format: select.value, rigged: rigged.checked }
+      run('saveSelected')
+    })
+    panel.appendChild(saveBtn)
+
+    // Save JSON stays separate from the export dropdown.
     panel.appendChild(makeBtn('Save JSON', 'saveJson', false))
 
     document.body.appendChild(panel)
