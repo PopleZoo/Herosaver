@@ -2,6 +2,28 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.5.6]
+
+### Fixed
+- glTF export now passes the Khronos validator with zero errors, so Blender can
+  import it. Fixes:
+  - Accessors were missing the required `count` field (`writeAccessor` never
+    returned it), which made importers reject the file outright.
+  - Synthesized bones (kitbashing / detached skeletons) left non-root joints
+    dangling outside the node tree; the exporter now emits the entire armature
+    as a self-contained subtree under the mesh node with bone-local matrices.
+  - Skin deduplication keyed skeletons by `skeleton.uuid`, but looked them up by
+    the bone-set signature (and old three.js `Skeleton` has no `uuid`), so shared
+    skeletons still produced duplicate armatures and all inverse-bind accessors
+    collided into one. Both are now keyed by the bone-set signature.
+  - Inverse-bind buffer views were tagged `target: ARRAY_BUFFER`; they are now
+    target-less as required.
+
+### Removed
+- Raw STL export (`Save STL (raw)` button / menu entry and `saveStl()`). Only
+  `Save Clean STL` remains; `exportSTLBuffer` is still used by the
+  `heroCubeDiag` diagnostic.
+
 ## [1.5.5]
 
 ### Fixed

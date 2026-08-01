@@ -83,8 +83,8 @@ export class BufferWriter {
    * @param {Float32Array|Uint16Array|Uint8Array} array
    * @param {number} componentType - one of the BYTE/SHORT/FLOAT constants
    * @param {string} accessorType - 'SCALAR' | 'VEC2' | 'VEC3' | 'VEC4' | 'MAT4'
-   * @param {number} target - ARRAY_BUFFER or ELEMENT_ARRAY_BUFFER
-   * @returns {{bufferView:number, accessor:number, byteOffset:number, min:Array, max:Array}}
+   * @param {number} target - ARRAY_BUFFER, ELEMENT_ARRAY_BUFFER, or 0 for no target
+   * @returns {{bufferView:number, byteOffset:number, count:number, min:Array, max:Array}}
    */
   writeAccessor (array, componentType, accessorType, target = ARRAY_BUFFER) {
     this.align(4)
@@ -104,12 +104,13 @@ export class BufferWriter {
     const byteLength = this.currentOffset - byteOffset
 
     const bufferView = this.bufferViews.length
-    this.bufferViews.push({
+    const bufferViewDef = {
       buffer: 0,
       byteOffset,
-      byteLength,
-      target
-    })
+      byteLength
+    }
+    if (target) bufferViewDef.target = target
+    this.bufferViews.push(bufferViewDef)
 
     const count = accessorType === 'MAT4' ? array.length / 16 : array.length / typeSize(accessorType)
     const accessor = {
@@ -133,7 +134,7 @@ export class BufferWriter {
     }
 
     this.accessors.push(accessor)
-    return { bufferView, accessor: this.accessors.length - 1, byteOffset, min, max }
+    return { bufferView, byteOffset, count, min, max }
   }
 
   /**

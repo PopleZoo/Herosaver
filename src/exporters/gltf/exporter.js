@@ -477,44 +477,65 @@ export async function exportGltf (options = {}) {
       continue
     }
 
-    const joints = []
-    const inverseBind = new Float32Array(skeleton.bones.length * 16)
-    let missingBone = false
-    for (let i = 0; i < skeleton.bones.length; i++) {
-      const bone = skeleton.bones[i]
-      let boneNodeIndex = nodeIndexByUuid.get(bone.uuid)
-      if (boneNodeIndex === undefined) {
-        // Bone not visited during scene traversal - synthesize a node whose
-        // matrix places it correctly relative to the mesh node (so composed
-        // world matrix = bone.matrixWorld).
-        const local = invertMatrix(object.matrixWorld).multiply(bone.matrixWorld)
+    const bones = skeleton.bones
+    const missing = bones.some(b => nodeIndexByUuid.get(b.uuid) === undefined)
+
+    let joints
+    if (!missing) {
+      // All bones were visited during scene traversal; their glTF nodes already
+      // form the joint hierarchy (HeroForge parents bones under the mesh).
+      joints = bones.map(b => nodeIndexByUuid.get(b.uuid))
+    } else {
+      // Some bones are detached from the scene graph (kitbashing). Emit the
+      // ENTIRE armature as a self-contained subtree under the mesh node so every
+      // joint is reachable: each bone gets a node parented under its nearest
+      // bone ancestor (or the mesh for the armature root), with bone-local
+      // matrices (parentWorld^-1 * boneWorld).
+      const boneSet = new Set(bones)
+      const armatureParent = bone => {
+        let p = bone.parent
+        while (p) {
+          if (boneSet.has(p)) return p
+          p = p.parent
+        }
+        return null
+      }
+      const depthOf = bone => {
+        let d = 0
+        let p = armatureParent(bone)
+        while (p) { d++; p = armatureParent(p) }
+        return d
+      }
+
+      const nodeByBone = new Map()
+      const ordered = bones.slice().sort((a, b) => depthOf(a) - depthOf(b))
+      for (const bone of ordered) {
+        const parentBone = armatureParent(bone)
+        const parentWorld = parentBone ? parentBone.matrixWorld : object.matrixWorld
+        const parentNodeIndex = parentBone ? nodeByBone.get(parentBone) : nodeIndex
+        const local = invertMatrix(parentWorld).multiply(bone.matrixWorld)
         const gltfNode = {}
         if (bone.name) gltfNode.name = bone.name
         gltfNode.matrix = local.elements.slice()
-        boneNodeIndex = gltf.nodes.length
+        const idx = gltf.nodes.length
         gltf.nodes.push(gltfNode)
-        nodeIndexByUuid.set(bone.uuid, boneNodeIndex)
-        nodeObjectByIndex[boneNodeIndex] = bone
-        missingBone = true
+        nodeIndexByUuid.set(bone.uuid, idx)
+        nodeObjectByIndex[idx] = bone
+        nodeByBone.set(bone, idx)
+        if (!gltf.nodes[parentNodeIndex].children) gltf.nodes[parentNodeIndex].children = []
+        if (!gltf.nodes[parentNodeIndex].children.includes(idx)) {
+          gltf.nodes[parentNodeIndex].children.push(idx)
+        }
       }
-      joints.push(boneNodeIndex)
+      joints = bones.map(b => nodeByBone.get(b))
+    }
+
+    const inverseBind = new Float32Array(bones.length * 16)
+    for (let i = 0; i < bones.length; i++) {
       skeleton.boneInverses[i].elements.forEach((v, j) => { inverseBind[i * 16 + j] = v })
     }
 
-    if (!joints.length) continue
-
-    // Parent the synthesized root bone under the mesh node so glTF composes the
-    // correct world matrix (synthesized bones are relative to the mesh).
-    if (missingBone) {
-      const rootBone = skeleton.bones[0]
-      const rootBoneNodeIndex = nodeIndexByUuid.get(rootBone.uuid)
-      if (!gltf.nodes[nodeIndex].children) gltf.nodes[nodeIndex].children = []
-      if (!gltf.nodes[nodeIndex].children.includes(rootBoneNodeIndex)) {
-        gltf.nodes[nodeIndex].children.push(rootBoneNodeIndex)
-      }
-    }
-
-    const ibmAccessor = writeAttribute('ibm_' + skeleton.uuid, inverseBind, 16, FLOAT)
+    const ibmAccessor = writeAttribute('ibm_' + key, inverseBind, 16, FLOAT, 0)
 
     skinIndex = gltf.skins.length
     gltf.skins.push({
@@ -523,7 +544,7 @@ export async function exportGltf (options = {}) {
       inverseBindMatrices: ibmAccessor,
       skeleton: joints[0]
     })
-    skinIndexBySkeleton.set(skeleton.uuid, skinIndex)
+    skinIndexBySkeleton.set(key, skinIndex)
 
     gltf.nodes[nodeIndex].skin = skinIndex
   }
@@ -532,6 +553,16 @@ export async function exportGltf (options = {}) {
   const buffer = bufferWriter.finalizeBuffer()
   gltf.bufferViews = bufferWriter.bufferViews
   gltf.buffers = [{ byteLength: buffer.byteLength }]
+
+  // Drop empty optional arrays so the validator/importers don't reject them
+  // (e.g. no atlases -> no images/textures/samplers; no skinned meshes).
+  if (!gltf.images.length) {
+    delete gltf.images
+    delete gltf.textures
+    delete gltf.samplers
+  }
+  if (!gltf.materials.length) delete gltf.materials
+  if (!gltf.skins.length) delete gltf.skins
 
   return { gltf, buffers: [buffer] }
 }
