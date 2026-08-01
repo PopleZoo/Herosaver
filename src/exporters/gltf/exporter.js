@@ -16,6 +16,21 @@ const ARRAY_BUFFER = 34962
 const ELEMENT_ARRAY_BUFFER = 34963
 
 /**
+ * Version-safe matrix inverse: HeroForge's three.js predates Matrix4#invert
+ * (added in r123); older builds only had getInverse(). Return a clone of `m`
+ * inverted either way.
+ */
+function invertMatrix (m) {
+  const out = m.clone()
+  if (typeof out.invert === 'function') {
+    out.invert()
+  } else if (typeof out.getInverse === 'function') {
+    out.getInverse(m)
+  }
+  return out
+}
+
+/**
  * Decode HeroForge sawtooth-encoded blend weight: abs(mod(v + 1.0, 2.0) - 1.0)
  */
 function decodeWeight (v) {
@@ -395,7 +410,7 @@ export async function exportGltf (options = {}) {
     if (parentObject === null) {
       gltfNode.matrix = object.matrixWorld.elements.slice()
     } else {
-      const local = parentObject.matrixWorld.clone().invert().multiply(object.matrixWorld)
+      const local = invertMatrix(parentObject.matrixWorld).multiply(object.matrixWorld)
       gltfNode.matrix = local.elements.slice()
     }
 
@@ -472,7 +487,7 @@ export async function exportGltf (options = {}) {
         // Bone not visited during scene traversal - synthesize a node whose
         // matrix places it correctly relative to the mesh node (so composed
         // world matrix = bone.matrixWorld).
-        const local = object.matrixWorld.clone().invert().multiply(bone.matrixWorld)
+        const local = invertMatrix(object.matrixWorld).multiply(bone.matrixWorld)
         const gltfNode = {}
         if (bone.name) gltfNode.name = bone.name
         gltfNode.matrix = local.elements.slice()

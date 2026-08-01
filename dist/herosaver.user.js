@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Herosaver
 // @namespace    https://github.com/PopleZoo/Herosaver
-// @version      1.5.4
+// @version      1.5.5
 // @description  Save Configuration and STLs from websites using the THREE.JS framework
 // @author       reformagus&D1amondweaver
 // @homepageURL  https://github.com/PopleZoo/Herosaver

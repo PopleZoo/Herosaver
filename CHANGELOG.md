@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.5.5]
+
+### Fixed
+- glTF export failed with `t.matrixWorld.clone().invert is not a function` on
+  HeroForge's older three.js build (which predates `Matrix4#invert`, added in
+  r123). Bone/node local-matrix computation now uses a version-safe inverse
+  helper that falls back to `getInverse()` when `invert()` is unavailable.
+
 ## [1.5.4]
 
 ### Added

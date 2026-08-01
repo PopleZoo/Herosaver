@@ -17,7 +17,7 @@ const sanitize = s => s.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_').repl
 
 // Bump with each release so stale CDN/browser copies are easy to spot from the
 // console: window.herosaverVersion.
-window.herosaverVersion = '1.5.4'
+window.herosaverVersion = '1.5.5'
 
 // ─── scene discovery ────────────────────────────────────────────────────────
 // HeroForge keeps the whole composition (figure + mounts + companions) inside
