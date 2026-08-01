@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Herosaver
 // @namespace    https://github.com/PopleZoo/Herosaver
-// @version      1.5.8
+// @version      1.5.9
 // @description  Save Configuration and STLs from websites using the THREE.JS framework
 // @author       reformagus&D1amondweaver
 // @homepageURL  https://github.com/PopleZoo/Herosaver
@@ -32,6 +32,7 @@
   GM_registerMenuCommand('Herosaver: Save Clean STL', () => run('saveCleanStl'))
   GM_registerMenuCommand('Herosaver: Save OBJ and Textures', () => run('saveObj'))
   GM_registerMenuCommand('Herosaver: Save glTF (rigged)', () => run('saveGltf'))
+  GM_registerMenuCommand('Herosaver: Save FBX (rigged)', () => run('saveFbx'))
   GM_registerMenuCommand('Herosaver: Save JSON', () => run('saveJson'))
   // ─── Remove any foreign "Save STL" button ─────────────────────────────────
   // Drop any other on-page control labelled exactly "Save STL" that this script
@@ -74,15 +75,17 @@
       return r
     }
 
-    // "Save as" format dropdown.
+    // "Save as" format dropdown. Labels state what each format contains; the
+    // rig is baked into glTF/FBX (always) and never into OBJ/STL.
     const select = document.createElement('select')
-    select.style.cssText = 'background:#374151;color:#fff;border:0;border-radius:6px;padding:6px 8px;font-size:13px;cursor:pointer'
-    const options = [
+    select.style.cssText = 'width:100%;background:#374151;color:#fff;border:0;border-radius:6px;padding:8px 10px;font-size:13px;cursor:pointer'
+    const formats = [
       ['stl', 'STL'],
-      ['obj', 'OBJ + Textures'],
-      ['gltf', 'glTF']
+      ['obj', 'OBJ+Textures'],
+      ['gltf', 'glTF+Rigged+Textures'],
+      ['fbx', 'FBX+Rigged+Textures']
     ]
-    options.forEach(([value, label]) => {
+    formats.forEach(([value, label]) => {
       const o = document.createElement('option')
       o.value = value
       o.textContent = label
@@ -91,23 +94,12 @@
     })
     panel.appendChild(row([select]))
 
-    // Rigged toggle. OBJ/STL can't carry a rig, so ticking it exports the rigged
-    // glTF instead (which also bundles the textures).
-    const rigged = document.createElement('input')
-    rigged.type = 'checkbox'
-    rigged.checked = true
-    const rigLabel = document.createElement('label')
-    rigLabel.style.cssText = 'color:#e5e7eb;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:6px'
-    rigLabel.appendChild(rigged)
-    rigLabel.appendChild(document.createTextNode('Rigged (glTF)'))
-    panel.appendChild(row([rigLabel]))
-
     const makeBtn = (label, fn, primary) => {
       const b = document.createElement('button')
       b.textContent = label
       b.style.cssText = [
-        'cursor:pointer', 'border:0', 'border-radius:6px',
-        'padding:7px 12px', 'font-size:13px', 'font-weight:600', 'text-align:left',
+        'width:100%', 'cursor:pointer', 'border:0', 'border-radius:6px',
+        'padding:8px 12px', 'font-size:13px', 'font-weight:600', 'text-align:center',
         primary ? 'background:#2563eb' : 'background:#374151', 'color:#fff'
       ].join(';')
       b.addEventListener('click', () => { if (fn) run(fn) })
@@ -116,7 +108,10 @@
 
     const saveBtn = makeBtn('Save', '', true)
     saveBtn.addEventListener('click', () => {
-      window.__herosaverSaveState = { format: select.value, rigged: rigged.checked }
+      window.__herosaverSaveState = {
+        format: select.value,
+        rigged: select.value === 'gltf' || select.value === 'fbx'
+      }
       run('saveSelected')
     })
     panel.appendChild(saveBtn)

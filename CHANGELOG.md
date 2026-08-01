@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.5.9]
+
+### Added
+- Rigged **FBX** export. `saveFbx()` writes a self-contained ASCII FBX 7.4 file
+  (delivered as a `.zip`) with the full rig: original scene graph as
+  Model/LimbNode nodes, Skin Deformer + per-bone Cluster SubDeformers and a
+  BindPose using the same `Transform = boneWorld^-1 * meshWorld` /
+  `TransformLink = boneWorld` semantics Blender writes, and the color atlas
+  embedded as base64 (Video/Content). UVs are remapped into the atlas with the
+  live shader's `uvPosScl` uniform in the OBJ convention (no V flip).
+- On-page panel: the Save-as dropdown gains "FBX". The rigged checkbox (which
+  never actually toggled anything) is removed — glTF and FBX always carry the
+  rig, OBJ/STL never do. Format labels now state their contents directly
+  (`STL`, `OBJ+Textures`, `glTF+Rigged+Textures`, `FBX+Rigged+Textures`). New
+  menu command `Herosaver: Save FBX (rigged)`.
+
 ## [1.5.8]
 
 ### Fixed

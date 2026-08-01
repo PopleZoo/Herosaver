@@ -6,6 +6,7 @@ import { saveAs } from 'file-saver'
 import { character, getName, process, bakeSkinnedVertex } from './utils'
 import { parseSTL, findConnectedComponents, analyzeShell } from './cube-remover'
 import { exportGltf } from './exporters/gltf'
+import { exportFbx } from './exporters/fbx'
 import { createZip } from './exporters/gltf/zip'
 
 // Export process for debugging
@@ -17,7 +18,7 @@ const sanitize = s => s.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_').repl
 
 // Bump with each release so stale CDN/browser copies are easy to spot from the
 // console: window.herosaverVersion.
-window.herosaverVersion = '1.5.8'
+window.herosaverVersion = '1.5.9'
 
 // ─── scene discovery ────────────────────────────────────────────────────────
 // HeroForge keeps the whole composition (figure + mounts + companions) inside
@@ -272,12 +273,15 @@ window.saveCleanStl = subdivisions => {
 }
 
 // Dispatched by the on-page panel's "Save" button. The panel sets
-// window.__herosaverSaveState = { format: 'stl'|'obj'|'gltf', rigged: bool }
-// before calling run('saveSelected').
+// window.__herosaverSaveState = { format: 'stl'|'obj'|'gltf'|'fbx', rigged: bool }
+// before calling run('saveSelected'). Only the format matters: glTF/FBX always
+// carry the rig, OBJ/STL never do.
 window.saveSelected = () => {
   const state = window.__herosaverSaveState || {}
-  if (state.rigged) return window.saveGltf()
-  if (state.format === 'stl') return window.saveCleanStl()
+  const format = state.format || (state.rigged ? 'gltf' : 'obj')
+  if (format === 'gltf') return window.saveGltf()
+  if (format === 'fbx') return window.saveFbx()
+  if (format === 'stl') return window.saveCleanStl()
   return window.saveObj()
 }
 
@@ -402,6 +406,43 @@ window.saveObj = () => {
     saveObjInner(atlases)
   } catch (e) {
     console.error('[Herosaver] saveObj failed:', e)
+  }
+}
+
+// export character as a rigged ASCII FBX file with the same inputs as the glTF
+// exporter (original scene graph, bones, skinning and embedded color atlas).
+// Delivered as a .zip like the other exports; the atlas textures are embedded
+// as base64 in the FBX itself (Video/Content), so no extra files are needed.
+window.saveFbx = async () => {
+  try {
+    console.log('[Herosaver] Starting FBX export...')
+    const atlasFiles = buildAtlasFiles()
+    console.log(`[Herosaver] FBX: built ${atlasFiles.size} atlas texture(s)`)
+
+    let cubeMeshes = new Set()
+    try {
+      cubeMeshes = cubeMeshUuids()
+    } catch (e) {
+      console.warn('[Herosaver] cube detection failed, exporting with the wrapping cube:', e)
+    }
+
+    const { fbx } = await exportFbx({
+      roots: getExportRoots(),
+      textureAtlas: atlasFiles,
+      skipUuids: cubeMeshes
+    })
+
+    if (!fbx) {
+      console.warn('[Herosaver] FBX export produced no data (empty scene?)')
+      return
+    }
+
+    const baseName = sanitize(getName())
+    const zipBytes = createZip([{ name: `${baseName}.fbx`, data: fbx }])
+    saveAs(new Blob([zipBytes], { type: 'application/zip' }), `${baseName}.zip`)
+    console.log(`[Herosaver] FBX export complete (${(fbx.length / 1024 / 1024).toFixed(1)} MB ASCII)`)
+  } catch (e) {
+    console.error('[Herosaver] FBX export failed:', e)
   }
 }
 
