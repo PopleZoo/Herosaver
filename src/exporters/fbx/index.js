@@ -700,7 +700,8 @@ export async function exportFbx (options = {}) {
     ['TimeSpanStart', 'KTime', 'Time', 0],
     ['TimeSpanStop', 'KTime', 'Time', 0],
     ['TimeMode', 'enum', '', 0],
-    ['CustomFrameRate', 'double', 'Number', 30.0001]
+    ['CustomFrameRate', 'double', 'Number', 30.0001],
+    ['RotationOrder', 'enum', '', 0]
   ]
   for (const [name, type, label, value] of globals) {
     s.push(I(2) + `P: "${name}", "${type}", "${label}", "", ${value}`)
@@ -759,7 +760,7 @@ export async function exportFbx (options = {}) {
   s.push(I(1) + '}')
   s.push('}')
 
-  return { fbx: s.join('\n') + '\n' }
+  return { fbx: s.join('\r\n') + '\r\n' }
 }
 
 // The atlas data URI is `data:image/png;base64,<base64>`; the FBX Video/Content
