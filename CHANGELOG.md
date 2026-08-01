@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.5.3]
+
+### Added
+- Rigged glTF 2.0 export (`Save glTF (rigged)` button + `saveGltf()`). The
+  exporter walks the original HeroForge scene graph (not the baked `process()`
+  output) so the rig survives: bones become glTF nodes with local matrices,
+  `skeleton.boneInverses` become inverse bind matrices, and the sawtooth-encoded
+  `skin0`/`skin1`/`skin2` blend weights are decoded into `JOINTS_0`/`WEIGHTS_0`
+  (top-4, normalised). Geometry keeps native Y-up coordinates (no STL/OBJ axis
+  rotation). Morph targets (stored as `morphTargetN` attributes) are exported as
+  glTF morph targets with their influences/names. Color atlases are embedded as
+  base-color textures (data URIs, same flip + eye-composite pipeline as
+  `saveTextures`), and per-mesh UVs are remapped into their atlas rect via the
+  same `uvPosScl` the shader uses. The display case / dome is removed via the
+  same `cubeMeshUuids()` detection as OBJ/STL. `Save glTF` is registered in the
+  userscript menu and on-page panel.
+
 ## [1.5.2]
 
 ### Added

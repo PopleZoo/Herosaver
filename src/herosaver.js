@@ -5,6 +5,7 @@ import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
 import { saveAs } from 'file-saver'
 import { character, getName, process, bakeSkinnedVertex } from './utils'
 import { parseSTL, findConnectedComponents, analyzeShell } from './cube-remover'
+import { exportGltf } from './exporters/gltf'
 
 // Export process for debugging
 window.process = process
@@ -15,7 +16,7 @@ const sanitize = s => s.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_').repl
 
 // Bump with each release so stale CDN/browser copies are easy to spot from the
 // console: window.herosaverVersion.
-window.herosaverVersion = '1.5.2'
+window.herosaverVersion = '1.5.3'
 
 // ─── scene discovery ────────────────────────────────────────────────────────
 // HeroForge keeps the whole composition (figure + mounts + companions) inside
@@ -269,6 +270,64 @@ window.saveStl = subdivisions => {
 window.saveCleanStl = subdivisions => {
   const cleaned = exportSTLBufferClean(subdivisions)
   saveAs(new Blob([cleaned], { type: 'application/octet-stream' }), `${sanitize(getName())}_clean.stl`)
+}
+
+window.saveGltf = async (options = {}) => {
+  const subdivisions = options.subdivisions || 2
+  const mirroredPose = options.mirroredPose || !!character.data.mirroredPose
+  const embedBuffers = options.embedBuffers !== false
+
+  try {
+    console.log('[Herosaver] Starting glTF export...')
+    const textureDataUris = buildGltfAtlasDataUris()
+    console.log(`[Herosaver] glTF: built ${textureDataUris.size} atlas data URI(s)`)
+
+    let cubeMeshes = new Set()
+    try {
+      cubeMeshes = cubeMeshUuids()
+    } catch (e) {
+      console.warn('[Herosaver] cube detection failed, exporting with the wrapping cube:', e)
+    }
+
+    const { gltf, buffers } = await exportGltf({
+      subdivisions: subdivisions,
+      mirroredPose: mirroredPose,
+      embedBuffers: embedBuffers,
+      roots: getExportRoots(),
+      textureDataUris: textureDataUris,
+      skipUuids: cubeMeshes
+    })
+
+    if (embedBuffers) {
+      // Embed buffers as data URIs
+      const gltfWithBuffers = { ...gltf }
+      if (buffers.length > 0) {
+        const buffer = buffers[0]
+        const uint8 = new Uint8Array(buffer)
+        let binary = ''
+        const chunkSize = 8192
+        for (let i = 0; i < uint8.length; i += chunkSize) {
+          const chunk = uint8.subarray(i, i + chunkSize)
+          binary += String.fromCharCode.apply(null, chunk)
+        }
+        const base64 = window.btoa(binary)
+        gltfWithBuffers.buffers = [{
+          byteLength: (gltf.buffers && gltf.buffers[0] ? gltf.buffers[0].byteLength : 0) || 0,
+          uri: 'data:application/octet-stream;base64,' + base64
+        }]
+      }
+      saveAs(new Blob([JSON.stringify(gltfWithBuffers, null, 2)], { type: 'model/gltf+json' }), `${sanitize(getName())}.gltf`)
+    } else {
+      // Separate .gltf + .bin
+      saveAs(new Blob([JSON.stringify(gltf, null, 2)], { type: 'model/gltf+json' }), `${sanitize(getName())}.gltf`)
+      if (buffers.length > 0) {
+        saveAs(new Blob([buffers[0]], { type: 'application/octet-stream' }), `${sanitize(getName())}.bin`)
+      }
+    }
+    console.log('[Herosaver] glTF export complete')
+  } catch (e) {
+    console.error('[Herosaver] glTF export failed:', e)
+  }
 }
 
 // export character as OBJ file with UVs and a MTL referencing the saved color
@@ -690,6 +749,74 @@ const toHex = c => `#${[c.r, c.g, c.b].map(x => Math.round(Math.min(1, Math.max(
 // flipped to GL orientation (v=0 at the bottom) so it matches the shader's
 // sampling and the OBJ UVs in saveObj.
 // Returns a Map of texture uuid -> { file, width, height } used by saveObj.
+
+// readRenderTargetPixels returns rows bottom-to-top; flip them so the PNG is
+// stored top-down (v=0 at the bottom), exactly how the shader samples the
+// atlas. Without this flip the saved texture is upside down, which shows up as
+// misplaced/inverted detail (e.g. the eyes). Creature-eye cells are then
+// re-painted with the full eye shader (see compositeEyes).
+const flipAndComposite = (target, kind, pixels) => {
+  const w = target.width
+  const h = target.height
+  const flipped = new Uint8Array(w * h * 4)
+  for (let y = 0; y < h; y++) {
+    flipped.set(pixels.subarray(y * w * 4, (y + 1) * w * 4), (h - 1 - y) * w * 4)
+  }
+
+  if (kind === 'color') {
+    try {
+      compositeEyes(flipped, w, h, target.texture)
+    } catch (e) {
+      console.warn('[Herosaver] eye compositing failed:', e)
+    }
+  }
+
+  return flipped
+}
+
+// Build color-atlas PNG data URIs (texture uuid -> data URI) for embedding in
+// the glTF export. Reuses the same flip + eye-composite pipeline as
+// saveTextures so the embedded base color textures match the exported PNGs.
+const buildGltfAtlasDataUris = () => {
+  const renderer = window.CK.renderManager.renderer
+  const uris = new Map()
+
+  findColorBakes().forEach(bake => {
+    const rgba = bake.targetsRGBA
+    if (!rgba) return
+    for (const kind of ['color', 'emissive']) {
+      const target = rgba[kind]
+      if (!target || !target.texture || uris.has(target.texture.uuid)) continue
+      const w = target.width
+      const h = target.height
+      try {
+        const pixels = new Uint8Array(w * h * 4)
+        renderer.readRenderTargetPixels(target, 0, 0, w, h, pixels)
+        if (kind === 'emissive') {
+          let lit = false
+          for (let i = 0; i < pixels.length; i += 4) {
+            if (pixels[i] || pixels[i + 1] || pixels[i + 2]) { lit = true; break }
+          }
+          if (!lit) continue
+        }
+        const flipped = flipAndComposite(target, kind, pixels)
+        const canvas = document.createElement('canvas')
+        canvas.width = w
+        canvas.height = h
+        const ctx = canvas.getContext('2d')
+        const data = ctx.createImageData(w, h)
+        data.data.set(flipped)
+        ctx.putImageData(data, 0, 0)
+        uris.set(target.texture.uuid, canvas.toDataURL('image/png'))
+      } catch (e) {
+        console.warn('[Herosaver] failed to build glTF atlas data URI:', e)
+      }
+    }
+  })
+
+  return uris
+}
+
 window.saveTextures = () => {
   const renderer = window.CK.renderManager.renderer
   const manifest = new Map()
@@ -723,24 +850,7 @@ window.saveTextures = () => {
     const suffix = nameCounts[base] === 1 ? '' : `_${nameCounts[base]}`
     const file = `${sanitize(getName())}_${base}${suffix}.png`
 
-    // readRenderTargetPixels returns rows bottom-to-top; flip them so the PNG
-    // is stored top-down (v=0 at the bottom), exactly how the shader samples
-    // the atlas. Without this flip the saved texture is upside down, which
-    // shows up as misplaced/inverted detail (e.g. the eyes).
-    const flipped = new Uint8Array(w * h * 4)
-    for (let y = 0; y < h; y++) {
-      flipped.set(pixels.subarray(y * w * 4, (y + 1) * w * 4), (h - 1 - y) * w * 4)
-    }
-
-    // Re-paint creature-eye cells with the full eye shader (the bake only has a
-    // simplified disc), so the exported atlas carries pupil/iris/sclera detail.
-    if (kind === 'color') {
-      try {
-        compositeEyes(flipped, w, h, target.texture)
-      } catch (e) {
-        console.warn('[Herosaver] eye compositing failed:', e)
-      }
-    }
+    const flipped = flipAndComposite(target, kind, pixels)
 
     const canvas = document.createElement('canvas')
     canvas.width = w

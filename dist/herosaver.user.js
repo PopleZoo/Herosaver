@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Herosaver
 // @namespace    https://github.com/PopleZoo/Herosaver
-// @version      1.5.2
+// @version      1.5.3
 // @description  Save Configuration and STLs from websites using the THREE.JS framework
 // @author       reformagus&D1amondweaver
 // @homepageURL  https://github.com/PopleZoo/Herosaver
@@ -32,6 +32,7 @@
   GM_registerMenuCommand('Herosaver: Save Clean STL', () => run('saveCleanStl'))
   GM_registerMenuCommand('Herosaver: Save STL (raw)', () => run('saveStl'))
   GM_registerMenuCommand('Herosaver: Save OBJ and Textures', () => run('saveObj'))
+  GM_registerMenuCommand('Herosaver: Save glTF (rigged)', () => run('saveGltf'))
   GM_registerMenuCommand('Herosaver: Save JSON', () => run('saveJson'))
 
   // ─── Remove any foreign "Save STL" button ─────────────────────────────────
@@ -84,6 +85,7 @@
     panel.appendChild(makeBtn('Save Clean STL', 'saveCleanStl', true))
     panel.appendChild(makeBtn('Save STL (raw)', 'saveStl', false))
     panel.appendChild(makeBtn('Save OBJ and Textures', 'saveObj', false))
+    panel.appendChild(makeBtn('Save glTF (rigged)', 'saveGltf', false))
     panel.appendChild(makeBtn('Save JSON', 'saveJson', false))
 
     document.body.appendChild(panel)
