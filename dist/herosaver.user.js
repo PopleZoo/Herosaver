@@ -113,7 +113,8 @@
         rigged: select.value === 'gltf' || select.value === 'fbx'
       }
       console.log('[Herosaver] Panel Save clicked, state:', state)
-      window.__herosaverSaveState = state
+      // Must use unsafeWindow to reach the page's global scope (Tampermonkey isolates window)
+      unsafeWindow.__herosaverSaveState = state
       run('saveSelected')
     })
     panel.appendChild(saveBtn)
