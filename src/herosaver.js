@@ -279,7 +279,6 @@ window.saveCleanStl = subdivisions => {
 window.saveSelected = () => {
   const state = window.__herosaverSaveState || {}
   const format = state.format || (state.rigged ? 'gltf' : 'obj')
-  console.log('[Herosaver] saveSelected read state:', state, '-> format:', format)
   if (format === 'gltf') return window.saveGltf()
   if (format === 'fbx') return window.saveFbx()
   if (format === 'stl') return window.saveCleanStl()
@@ -410,10 +409,10 @@ window.saveObj = () => {
   }
 }
 
-// export character as a rigged ASCII FBX file with the same inputs as the glTF
-// exporter (original scene graph, bones, skinning and embedded color atlas).
+// export character as a rigged BINARY FBX 7.5 file with the same inputs as the
+// glTF exporter (original scene graph, bones, skinning and embedded color atlas).
 // Delivered as a .zip like the other exports; the atlas textures are embedded
-// as base64 in the FBX itself (Video/Content), so no extra files are needed.
+// as raw PNG bytes in the FBX itself (Video/Content), so no extra files needed.
 window.saveFbx = async () => {
   try {
     console.log('[Herosaver] Starting FBX export...')
@@ -441,7 +440,7 @@ window.saveFbx = async () => {
     const baseName = sanitize(getName())
     const zipBytes = createZip([{ name: `${baseName}.fbx`, data: fbx }])
     saveAs(new Blob([zipBytes], { type: 'application/zip' }), `${baseName}.zip`)
-    console.log(`[Herosaver] FBX export complete (${(fbx.length / 1024 / 1024).toFixed(1)} MB ASCII)`)
+    console.log(`[Herosaver] FBX export complete (${(fbx.byteLength / 1024 / 1024).toFixed(1)} MB binary)`)
   } catch (e) {
     console.error('[Herosaver] FBX export failed:', e)
   }

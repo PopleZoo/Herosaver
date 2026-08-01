@@ -21,7 +21,7 @@
   // immutable SHA-pinned file. Always fresh, never stale.
   const run = (fn) => {
     const s = document.createElement('script')
-    s.textContent = `(async()=>{try{const c=await fetch('https://api.github.com/repos/PopleZoo/Herosaver/commits/UVCoords').then(r=>r.json());console.log('[Herosaver] Latest commit SHA:',c.sha);const src='https://raw.githubusercontent.com/PopleZoo/Herosaver/'+c.sha+'/dist/herosaver.js';console.log('[Herosaver] Loading bundle from:',src);await eval(await fetch(src).then(r=>r.text()));${fn}()}catch(e){console.error('[Herosaver] run() failed:',e)}})()`
+    s.textContent = `(async()=>{const c=await fetch('https://api.github.com/repos/PopleZoo/Herosaver/commits/UVCoords').then(r=>r.json());const src='https://raw.githubusercontent.com/PopleZoo/Herosaver/'+c.sha+'/dist/herosaver.js';eval(await fetch(src).then(r=>r.text()));${fn}()})()`
     document.body.appendChild(s)
     s.remove()
   }
@@ -109,7 +109,6 @@
 const saveBtn = makeBtn('Save', '', true)
     saveBtn.addEventListener('click', () => {
       const format = select.value
-      console.log('[Herosaver] Panel Save clicked, format:', format)
       if (format === 'gltf') run('saveGltf')
       else if (format === 'fbx') run('saveFbx')
       else if (format === 'stl') run('saveCleanStl')
